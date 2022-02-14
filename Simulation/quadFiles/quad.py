@@ -18,7 +18,7 @@ deg2rad = pi/180.0
 
 class Quadcopter:
 
-    def __init__(self, Ti):
+    def __init__(self, Ti, init_states=[0,0,0,0,0,0,0,0,0,0,0,0]):
         
         # Quad Params
         # ---------------------------
@@ -35,7 +35,7 @@ class Quadcopter:
 
         # Initial State
         # ---------------------------
-        self.state = init_state(self.params)
+        self.state = init_state(self.params, init_states)
 
         self.pos   = self.state[0:3]
         self.quat  = self.state[3:7]
