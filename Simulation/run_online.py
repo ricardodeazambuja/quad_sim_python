@@ -1,33 +1,26 @@
 # -*- coding: utf-8 -*-
 """
-author: John Bass
+original author: John Bass
 email: john.bobzwik@gmail.com
 license: MIT
 Please feel free to use and modify this, but keep the above information. Thanks!
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 import time
-import cProfile
-
-from collections import namedtuple
+from numpy.linalg import norm
 
 from potentialField import PotField
-from ctrl import Control
-from quadFiles.quad import Quadcopter
+from ctrl import Controller
+from quad import Quadcopter
 from utils.windModel import Wind
 import utils
-import config
 
 deg2rad = np.pi/180.0
 
 sim_hz = []
 
 def main():
-
-    # Create a namedtuple type, Point
-    Trajectory = namedtuple("Trajectory", "ctrlType yawType omit_yaw_follow current_heading sDes")
 
     # Simulation Setup
     # --------------------------- 
@@ -56,16 +49,14 @@ def main():
 
 
     # Select Yaw Trajectory Type      (0: none                      1: yaw_waypoint_timed,      2: yaw_waypoint_interp     3: follow          4: zero)
-    yawType = 3
-    
-    omit_yaw_follow = 0
+    yawType = 4
 
 
     print(f"Control type: {ctrlType}")
 
     # Initialize Quadcopter, Controller, Wind, Result Matrixes
     # ---------------------------
-    init_pose = np.array([10,20,-10,0,0,0]) # in NED
+    init_pose = np.array([0,10,0,0,0,0]) # in NED
     init_twist = np.array([0,0,0,0,0,0]) # in NED
     init_states = np.hstack((init_pose,init_twist))
 
@@ -82,23 +73,18 @@ def main():
     desPQR = np.array([0., 0., 0.]) # Desired angular velocity in the body frame (p, q, r)
     desYawRate = 30.0*np.pi/180     # Desired yaw speed
     sDes = np.hstack((desPos, desVel, desAcc, desThr, desEul, desPQR, desYawRate)).astype(float)
-    traj = Trajectory(ctrlType, 
-                      yawType,
-                      omit_yaw_follow,
-                      quad.psi,
-                      sDes
-                      )
 
-    ctrl = Control(quad, traj.yawType)
+    ctrl = Controller(quad.params, yawType)
     wind = Wind('None', 2.0, 90, -15)
-    potfld.isWithinRange(quad)
-    potfld.isWithinField(quad)        
-    potfld.rep_force(quad, traj)
+    potfld.rep_force(quad.pos, desPos)
 
 
     # Generate First Commands
     # ---------------------------
-    ctrl.controller(traj, quad, potfld, Ts)
+    ctrl.control(ctrlType, yawType, 
+                 desPos, desVel, desAcc, desThr, desEul, desPQR, desYawRate,
+                 quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
+                 potfld, Ts)
     
     # Initialize Result Matrixes
     # ---------------------------
@@ -126,7 +112,7 @@ def main():
     quat_all.append(quad.quat)
     omega_all.append(quad.omega)
     euler_all.append(quad.euler)
-    sDes_traj_all.append(traj.sDes)
+    sDes_traj_all.append(sDes)
     sDes_calc_all.append(ctrl.sDesCalc)
     w_cmd_all.append(ctrl.w_cmd)
     wMotor_all.append(quad.wMotor)
@@ -134,11 +120,14 @@ def main():
     tor_all.append(quad.tor)
     potfld_all.append(potfld.F_rep)
     fieldPointcloud.append(potfld.fieldPointcloud)
-
-    wall = np.random.rand(500,3)
-    wall[:,0] = wall[:,0]*5-2.5
-    wall[:,1] = 0
-    wall[:,2] = -wall[:,2]*5
+    
+    # rs = np.random.RandomState() # just add a seed for reproducibility ...
+    # wall = rs.rand(2000,3)*5-2.5
+    wall = np.empty((0,3)) # no wall
+    # l = 10
+    # wall[:,0] = wall[:,0]*l-l/2
+    # wall[:,1] = 0 #wall[:,0]*2-1
+    # wall[:,2] = -(wall[:,2]*l-l/2)
 
     # Run Simulation
     # ---------------------------
@@ -147,37 +136,33 @@ def main():
     start_time = time.time()
     final_pos = False
     min_dist = 0.3
+    stop_vel = 0.1
     while (round(t,3) < Tf) and not final_pos:
         t_ini = time.monotonic()
 
-        desPos = [0,-2,-2]
+        desPos = [0,-10,0]
         desVel = np.array([0., 0., 0.])
         desAcc = np.array([0., 0., 0.])
         desThr = np.array([0., 0., 0.])
-        desEul = np.array([45., 0., 0.])
+        desEul = np.array([0., 0., 0.])
         desPQR = np.array([0., 0., 0.])
-        desYawRate = 30.0*np.pi/180
+        desYawRate = 0#30.0*np.pi/180
         sDes = np.hstack((desPos, desVel, desAcc, desThr, desEul, desPQR, desYawRate)).astype(float)
-        traj = Trajectory(ctrlType, 
-                        yawType,
-                        omit_yaw_follow,
-                        quad.psi,
-                        sDes
-                        )
 
         potfld = PotField(pfType=1, importedData=wall, rangeRadius=10, fieldRadius=5, kF=1)
-        potfld.isWithinRange(quad)
-        potfld.isWithinField(quad)        
-        potfld.rep_force(quad, traj)
+        potfld.rep_force(quad.pos, desPos)
 
         # Dynamics (using last timestep's commands)
         # ---------------------------    
-        quad.update(t, Ts, ctrl.w_cmd, wind)
+        quad.update(t, Ts, ctrl.w_cmd, wind=None)
         t += Ts
 
         # Generate Commands (for next iteration)
         # ---------------------------
-        ctrl.controller(traj, quad, potfld, Ts)
+        ctrl.control(ctrlType, yawType, 
+                     desPos, desVel, desAcc, desThr, desEul, desPQR, desYawRate,
+                     quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
+                     potfld, Ts)
 
         
         # print("{:.3f}".format(t))
@@ -188,7 +173,7 @@ def main():
         quat_all.append(quad.quat)
         omega_all.append(quad.omega)
         euler_all.append(quad.euler)
-        sDes_traj_all.append(traj.sDes)
+        sDes_traj_all.append(sDes)
         sDes_calc_all.append(ctrl.sDesCalc)
         w_cmd_all.append(ctrl.w_cmd)
         wMotor_all.append(quad.wMotor)
@@ -200,7 +185,7 @@ def main():
         i += 1
         sim_hz.append(1/(time.monotonic()-t_ini))
 
-        final_pos = abs(traj.sDes[:3]-quad.pos).sum() < min_dist
+        final_pos = (abs(sDes[:3]-quad.pos).sum() < min_dist) and (norm(quad.vel) < stop_vel)
     
     total_time = time.time() - start_time
     print(f"Simulated {t:.2f}s in {total_time:.2f}s or {t/total_time:.2}X - sim_hz [max,min,avg]: {max(sim_hz):.4f},{min(sim_hz):.4f},{sum(sim_hz)/len(sim_hz):.4f}")
@@ -224,14 +209,8 @@ def main():
     potfld_all = np.asanyarray(potfld_all)
     fieldPointcloud = np.array(fieldPointcloud, dtype=object)
 
-    # utils.fullprint(sDes_traj_all[:,3:6])
-    # utils.makeFigures(quad.params, t_all, pos_all, vel_all, quat_all, omega_all, euler_all, w_cmd_all, wMotor_all, thr_all, tor_all, sDes_traj_all, sDes_calc_all)
-    ani = utils.sameAxisAnimation(t_all, np.asanyarray([desPos]), pos_all, quat_all, sDes_traj_all, Ts, quad.params, traj.ctrlType, traj.yawType, ifsave, wall, potfld_all, fieldPointcloud)
-    plt.show()
+    # wall = np.empty((0,wall.shape[1])) # no wall
+    ani = utils.sameAxisAnimation(t_all, np.asanyarray([desPos]), pos_all, quat_all, sDes_traj_all, Ts, quad.params, 1, yawType, ifsave, wall, potfld_all, fieldPointcloud)
 
 if __name__ == "__main__":
-    if (config.orient == "NED" or config.orient == "ENU"):
-        main()
-        # cProfile.run('main()')
-    else:
-        raise Exception("{} is not a valid orientation. Verify config.py file.".format(config.orient))
+    main()

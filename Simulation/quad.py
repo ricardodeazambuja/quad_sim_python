@@ -1,32 +1,85 @@
 # -*- coding: utf-8 -*-
 """
-author: John Bass
+original author: John Bass
 email: john.bobzwik@gmail.com
 license: MIT
 Please feel free to use and modify this, but keep the above information. Thanks!
 """
 
 import numpy as np
-from numpy import sin, cos, tan, pi, sign
+from numpy import sin, cos, pi, sign
 from scipy.integrate import ode
+from numpy.linalg import inv
 
-from quadFiles.initQuad import sys_params, init_cmd, init_state
 import utils
-import config
 
 deg2rad = pi/180.0
 
+
+quad_params = {}
+
+# Moments of inertia:
+# (e.g. from Bifilar Pendulum experiment https://arc.aiaa.org/doi/abs/10.2514/6.2007-6822)
+Ixx = 0.0123
+Iyy = 0.0123
+Izz = 0.0224
+IB  = np.array([[Ixx, 0,   0  ],
+                [0,   Iyy, 0  ],
+                [0,   0,   Izz]]) # Inertial tensor (kg*m^2)
+
+IRzz = 2.7e-5   # Rotor moment of inertia (kg*m^2)
+quad_params["mB"]   = 1.2    # mass (kg)
+quad_params["g"]    = 9.81   # gravity (m/s/s)
+quad_params["dxm"]  = 0.16   # arm length (m)
+quad_params["dym"]  = 0.16   # arm length (m)
+quad_params["dzm"]  = 0.05   # motor height (m)
+quad_params["IB"]   = IB
+quad_params["invI"] = inv(IB)
+quad_params["IRzz"] = IRzz
+
+quad_params["Cd"]         = 0.1      # https://en.wikipedia.org/wiki/Drag_coefficient
+quad_params["kTh"]        = 1.076e-5 # thrust coeff (N/(rad/s)^2)  (1.18e-7 N/RPM^2)
+quad_params["kTo"]        = 1.632e-7 # torque coeff (Nm/(rad/s)^2)  (1.79e-9 Nm/RPM^2)
+quad_params["minThr"]     = 0.1*4    # Minimum total thrust
+quad_params["maxThr"]     = 9.18*4   # Maximum total thrust
+quad_params["minWmotor"]  = 75       # Minimum motor rotation speed (rad/s)
+quad_params["maxWmotor"]  = 925      # Maximum motor rotation speed (rad/s)
+quad_params["tau"]        = 0.015    # Value for second order system for Motor dynamics
+quad_params["kp"]         = 1.0      # Value for second order system for Motor dynamics
+quad_params["damp"]       = 1.0      # Value for second order system for Motor dynamics
+
+quad_params["motorc1"]    = 8.49     # w (rad/s) = cmd*c1 + c0 (cmd in %)
+quad_params["motorc0"]    = 74.7
+# quad_params["motordeadband"] = 1   
+# quad_params["ifexpo"] = bool(False)
+# if quad_params["ifexpo"]:
+#     quad_params["maxCmd"] = 100      # cmd (%) min and max
+#     quad_params["minCmd"] = 0.01
+# else:
+#     quad_params["maxCmd"] = 100
+#     quad_params["minCmd"] = 1
+
+# Select whether to use gyroscopic precession of the rotors in the quadcopter dynamics
+# ---------------------------
+# Set to False if rotor inertia isn't known (gyro precession has negigeable effect on drone dynamics)
+quad_params["usePrecession"] = False
+
 class Quadcopter:
 
-    def __init__(self, Ti, init_states=[0,0,0,0,0,0,0,0,0,0,0,0]):
+    def __init__(self, Ti, init_states=[0,0,0,0,0,0,0,0,0,0,0,0], orient = "NED", params = quad_params):
+        # init_states: x0, y0, z0, phi0, theta0, psi0, xdot, ydot, zdot, p, q, r
+
+        self.orient = "NED"
         
         # Quad Params
         # ---------------------------
-        self.params = sys_params()
+        self.params = params
+        self.params["mixerFM"]    = self.makeMixerFM() # Make mixer that calculated Thrust (F) and moments (M) as a function on motor speeds
+        self.params["mixerFMinv"] = inv(self.params["mixerFM"])
         
         # Command for initial stable hover
         # ---------------------------
-        ini_hover = init_cmd(self.params)
+        ini_hover = self.init_cmd(self.params)
         self.params["FF"] = ini_hover[0]         # Feed-Forward Command for Hover
         self.params["w_hover"] = ini_hover[1]    # Motor Speed for Hover
         self.params["thr_hover"] = ini_hover[2]  # Motor Thrust for Hover  
@@ -35,7 +88,7 @@ class Quadcopter:
 
         # Initial State
         # ---------------------------
-        self.state = init_state(self.params, init_states)
+        self.state = self.init_state(init_states)
 
         self.pos   = self.state[0:3]
         self.quat  = self.state[3:7]
@@ -49,23 +102,100 @@ class Quadcopter:
         self.extended_state()
         self.forces()
 
-        # Set Integrator
+        # Set Integrator - https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html
         # ---------------------------
         self.integrator = ode(self.state_dot).set_integrator('dopri5', first_step='0.00005', atol='10e-6', rtol='10e-6')
         self.integrator.set_initial_value(self.state, Ti)
 
 
+    def init_cmd(self, params):
+        mB = params["mB"]
+        g = params["g"]
+        kTh = params["kTh"]
+        kTo = params["kTo"]
+        c1 = params["motorc1"]
+        c0 = params["motorc0"]
+        
+        # w = cmd*c1 + c0   and   m*g/4 = kTh*w^2   and   torque = kTo*w^2
+        thr_hover = mB*g/4.0
+        w_hover   = np.sqrt(thr_hover/kTh)
+        tor_hover = kTo*w_hover*w_hover
+        cmd_hover = (w_hover-c0)/c1
+
+        return [cmd_hover, w_hover, thr_hover, tor_hover]
+
+
+    def init_state(self, init_states):
+        
+        x0, y0, z0, phi0, theta0, psi0, xdot, ydot, zdot, p, q, r = init_states
+
+        quat = utils.YPRToQuat(psi0, theta0, phi0)
+        
+        if (self.orient == "ENU"):
+            z0 = -z0
+
+        s = np.zeros(21)
+        s[0]  = x0       # x
+        s[1]  = y0       # y
+        s[2]  = z0       # z
+        s[3]  = quat[0]  # q0
+        s[4]  = quat[1]  # q1
+        s[5]  = quat[2]  # q2
+        s[6]  = quat[3]  # q3
+        s[7]  = xdot
+        s[8]  = ydot
+        s[9]  = zdot
+        s[10] = p
+        s[11] = q
+        s[12] = r
+
+        w_hover = self.params["w_hover"] # Hovering motor speed
+        wdot_hover = 0.                  # Hovering motor acc
+
+        s[13] = w_hover
+        s[14] = wdot_hover
+        s[15] = w_hover
+        s[16] = wdot_hover
+        s[17] = w_hover
+        s[18] = wdot_hover
+        s[19] = w_hover
+        s[20] = wdot_hover
+        
+        return s
+
+    def makeMixerFM(self):
+        dxm = self.params["dxm"]
+        dym = self.params["dym"]
+        kTh = self.params["kTh"]
+        kTo = self.params["kTo"] 
+
+        # Motor 1 is front left, then clockwise numbering.
+        # A mixer like this one allows to find the exact RPM of each motor 
+        # given a desired thrust and desired moments.
+        # Inspiration for this mixer (or coefficient matrix) and how it is used : 
+        # https://link.springer.com/article/10.1007/s13369-017-2433-2 (https://sci-hub.tw/10.1007/s13369-017-2433-2)
+        if (self.orient == "NED"):
+            mixerFM = np.array([[    kTh,      kTh,      kTh,      kTh],
+                                [dym*kTh, -dym*kTh,  -dym*kTh, dym*kTh],
+                                [dxm*kTh,  dxm*kTh, -dxm*kTh, -dxm*kTh],
+                                [   -kTo,      kTo,     -kTo,      kTo]])
+        elif (self.orient == "ENU"):
+            mixerFM = np.array([[     kTh,      kTh,      kTh,     kTh],
+                                [ dym*kTh, -dym*kTh, -dym*kTh, dym*kTh],
+                                [-dxm*kTh, -dxm*kTh,  dxm*kTh, dxm*kTh],
+                                [     kTo,     -kTo,      kTo,    -kTo]])
+        
+        
+        return mixerFM
+
     def extended_state(self):
-
-        # Rotation Matrix of current state (Direct Cosine Matrix)
-        self.dcm = utils.quat2Dcm(self.quat)
-
         # Euler angles of current state
         YPR = utils.quatToYPR_ZYX(self.quat)
         self.euler = YPR[::-1] # flip YPR so that euler state = phi, theta, psi
-        self.psi   = YPR[0]
-        self.theta = YPR[1]
-        self.phi   = YPR[2]
+        self.heading = self.psi   = YPR[0] # around Z => Yaw
+        self.theta = YPR[1] # around X => Roll
+        self.phi   = YPR[2] # around Y => Pitch
+        # https://en.wikipedia.org/wiki/Euler_angles#Tait%E2%80%93Bryan_angles
 
     
     def forces(self):
@@ -97,7 +227,7 @@ class Quadcopter:
         maxWmotor = self.params["maxWmotor"]
 
         IRzz = self.params["IRzz"]
-        if (config.usePrecession):
+        if (self.params["usePrecession"]):
             uP = 1
         else:
             uP = 0
@@ -151,16 +281,17 @@ class Quadcopter:
 
         # Wind Model
         # ---------------------------
-        [velW, qW1, qW2] = wind.randomWind(t)
-        # velW = 0
-
-        # velW = 5          # m/s
+        if wind == None:
+            [velW, qW1, qW2] = 0, 0, 0
+        else:    
+            [velW, qW1, qW2] = wind.randomWind(t)
+        # velW = 5           # m/s
         # qW1 = 0*deg2rad    # Wind heading
-        # qW2 = 60*deg2rad     # Wind elevation (positive = upwards wind in NED, positive = downwards wind in ENU)
+        # qW2 = 60*deg2rad   # Wind elevation (positive = upwards wind in NED, positive = downwards wind in ENU)
     
         # State Derivatives (from PyDy) This is already the analytically solved vector of MM*x = RHS
         # ---------------------------
-        if (config.orient == "NED"):
+        if (self.orient == "NED"):
             DynamicsDot = np.array([
                 [                                                                                                                                   xdot],
                 [                                                                                                                                   ydot],
@@ -175,7 +306,7 @@ class Quadcopter:
                 [                                    ((IByy - IBzz)*q*r - uP*IRzz*(wM1 - wM2 + wM3 - wM4)*q + ( ThrM1 - ThrM2 - ThrM3 + ThrM4)*dym)/IBxx], # uP activates or deactivates the use of gyroscopic precession.
                 [                                    ((IBzz - IBxx)*p*r + uP*IRzz*(wM1 - wM2 + wM3 - wM4)*p + ( ThrM1 + ThrM2 - ThrM3 - ThrM4)*dxm)/IByy], # Set uP to False if rotor inertia is not known (gyro precession has negigeable effect on drone dynamics)
                 [                                                                               ((IBxx - IByy)*p*q - TorM1 + TorM2 - TorM3 + TorM4)/IBzz]])
-        elif (config.orient == "ENU"):
+        elif (self.orient == "ENU"):
             DynamicsDot = np.array([
                 [                                                                                                                                   xdot],
                 [                                                                                                                                   ydot],
@@ -221,7 +352,7 @@ class Quadcopter:
 
         return sdot
 
-    def update(self, t, Ts, cmd, wind):
+    def update(self, t, Ts, cmd, wind=None):
 
         prev_vel   = self.vel
         prev_omega = self.omega

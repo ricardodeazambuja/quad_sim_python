@@ -10,7 +10,6 @@ import numpy as np
 from numpy import pi
 import matplotlib.pyplot as plt
 import utils
-import config
 
 rad2deg = 180.0/pi
 deg2rad = pi/180.0
@@ -25,7 +24,7 @@ def fullprint(*args, **kwargs):
     np.set_printoptions(opt)
 
 
-def makeFigures(params, time, pos_all, vel_all, quat_all, omega_all, euler_all, commands, wMotor_all, thrust, torque, sDes_traj, sDes_calc, potfld, minDist_all):
+def makeFigures(params, time, pos_all, vel_all, quat_all, omega_all, euler_all, commands, wMotor_all, thrust, torque, sDes_traj, sDes_calc, potfld, minDist_all, orient="NED"):
     x    = pos_all[:,0]
     y    = pos_all[:,1]
     z    = pos_all[:,2]
@@ -218,6 +217,6 @@ def makeFigures(params, time, pos_all, vel_all, quat_all, omega_all, euler_all, 
     plt.gca().set_aspect('equal', adjustable='box')
     plt.xlabel('x (m)')
     plt.ylabel('y (m)')
-    if (config.orient == "NED"):
+    if (orient == "NED"):
         plt.gca().invert_yaxis()
     plt.draw()

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-author: John Bass
+original author: John Bass
 email: john.bobzwik@gmail.com
 license: MIT
 Please feel free to use and modify this, but keep the above information. Thanks!
@@ -9,15 +9,13 @@ Please feel free to use and modify this, but keep the above information. Thanks!
 import numpy as np
 import matplotlib.pyplot as plt
 import time
-import cProfile
 
 from trajectory import Trajectory
 from potentialField import PotField
-from ctrl import Control
-from quadFiles.quad import Quadcopter
+from ctrl import Controller
+from quad import Quadcopter
 from utils.windModel import Wind
 import utils
-import config
 
 deg2rad = np.pi/180.0
 
@@ -38,19 +36,6 @@ def makeWaypoints(init_pose, wp, yaw, total_time=5):
 
 
 def quad_sim(t, Ts, quad, ctrl, wind, traj, potfld):
-
-    # Dynamics (using last timestep's commands)
-    # ---------------------------    
-    quad.update(t, Ts, ctrl.w_cmd, wind)
-    t += Ts
-
-    # Trajectory for Desired States 
-    # ---------------------------
-    traj.desiredState(t, Ts, quad)        
-
-    # Generate Commands (for next iteration)
-    # ---------------------------
-    ctrl.controller(traj, quad, potfld, Ts)
 
     return t
     
@@ -89,7 +74,7 @@ def main():
     trajSelect[0] = 12         
 
     # Select Yaw Trajectory Type      (0: none                      1: yaw_waypoint_timed,      2: yaw_waypoint_interp     3: follow          4: zero)
-    trajSelect[1] = 3           
+    yawType = trajSelect[1] = 3           
 
     # Select if waypoint time is used, or if average speed is used to calculate waypoint time   (0: waypoint time,   1: average speed)
     trajSelect[2] = 1           
@@ -118,21 +103,30 @@ def main():
     potfld = PotField(pfType=1,importedData=np.zeros((0,3),dtype=float))
 
     quad = Quadcopter(Ti, init_states)
-    traj = Trajectory(quad, ctrlType, trajSelect, desired_traj, dist_consider_arrived=1)
-    ctrl = Control(quad, traj.yawType)
+    traj = Trajectory(quad.psi, ctrlType, trajSelect, desired_traj, dist_consider_arrived=1)
+    ctrl = Controller(quad.params, traj.yawType)
     wind = Wind('None', 2.0, 90, -15)
-    potfld.isWithinRange(quad)
-    potfld.isWithinField(quad)        
-    potfld.rep_force(quad, traj)
 
 
     # Trajectory for First Desired States
     # ---------------------------
-    traj.desiredState(0, Ts, quad)        
+    traj.desiredState(quad.pos, 0, Ts)        
 
     # Generate First Commands
     # ---------------------------
-    ctrl.controller(traj, quad, potfld, Ts)
+    desPos     = traj.sDes[0:3]
+    desVel     = traj.sDes[3:6]
+    desAcc     = traj.sDes[6:9]
+    desThr     = traj.sDes[9:12]
+    desEul     = traj.sDes[12:15]
+    desPQR     = traj.sDes[15:18]
+    desYawRate = traj.sDes[18]
+
+    potfld.rep_force(quad.pos, desPos)
+    ctrl.control(ctrlType, yawType, 
+                 desPos, desVel, desAcc, desThr, desEul, desPQR, desYawRate,
+                 quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
+                 potfld, Ts)
     
     # Initialize Result Matrixes
     # ---------------------------
@@ -182,11 +176,32 @@ def main():
     start_time = time.time()
     while (round(t,3) < Tf) and (i < numTimeStep) and not (all(traj.desPos == traj.wps[-1,:]) and sum(abs(traj.wps[-1,:]-quad.pos)) <= traj.dist_consider_arrived):
         t_ini = time.monotonic()
+
+        # Dynamics (using last timestep's commands)
+        # ---------------------------    
+        quad.update(t, Ts, ctrl.w_cmd, wind)
+        t += Ts
+
+        # Trajectory for Desired States 
+        # ---------------------------
+        traj.desiredState(quad.pos, t, Ts)        
+
+        # Generate Commands (for next iteration)
+        # ---------------------------
+        desPos     = traj.sDes[0:3]
+        desVel     = traj.sDes[3:6]
+        desAcc     = traj.sDes[6:9]
+        desThr     = traj.sDes[9:12]
+        desEul     = traj.sDes[12:15]
+        desPQR     = traj.sDes[15:18]
+        desYawRate = traj.sDes[18]
+
         potfld = PotField(pfType=1, importedData=wall, rangeRadius=5, fieldRadius=3, kF=1)
-        potfld.isWithinRange(quad)
-        potfld.isWithinField(quad)        
-        potfld.rep_force(quad, traj)
-        t = quad_sim(t, Ts, quad, ctrl, wind, traj, potfld)
+        potfld.rep_force(quad.pos, desPos)
+        ctrl.control(ctrlType, yawType, 
+                    desPos, desVel, desAcc, desThr, desEul, desPQR, desYawRate,
+                    quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
+                    potfld, Ts)
         
         # print("{:.3f}".format(t))
         t_all.append(t)
@@ -233,11 +248,6 @@ def main():
     # utils.fullprint(sDes_traj_all[:,3:6])
     # utils.makeFigures(quad.params, t_all, pos_all, vel_all, quat_all, omega_all, euler_all, w_cmd_all, wMotor_all, thr_all, tor_all, sDes_traj_all, sDes_calc_all)
     ani = utils.sameAxisAnimation(t_all, traj.wps, pos_all, quat_all, sDes_traj_all, Ts, quad.params, traj.xyzType, traj.yawType, ifsave, wall, potfld_all, fieldPointcloud)
-    plt.show()
 
 if __name__ == "__main__":
-    if (config.orient == "NED" or config.orient == "ENU"):
-        main()
-        # cProfile.run('main()')
-    else:
-        raise Exception("{} is not a valid orientation. Verify config.py file.".format(config.orient))
+    main()

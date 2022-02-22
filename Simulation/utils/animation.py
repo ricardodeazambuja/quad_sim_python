@@ -8,15 +8,15 @@ Please feel free to use and modify this, but keep the above information. Thanks!
 
 import numpy as np
 from numpy import pi
+from numpy.linalg import norm
 import matplotlib.pyplot as plt
 from matplotlib import animation
 
 import utils
-import config
 
 numFrames = 8
 
-def sameAxisAnimation(t_all, waypoints, pos_all, quat_all, sDes_tr_all, Ts, params, xyzType, yawType, ifsave, pointcloud, F_rep, fieldPointcloud):
+def sameAxisAnimation(t_all, waypoints, pos_all, quat_all, sDes_tr_all, Ts, params, xyzType, yawType, ifsave, pointcloud, F_rep, fieldPointcloud, orient="NED"):
 
     global vector, withinfield
 
@@ -40,7 +40,7 @@ def sameAxisAnimation(t_all, waypoints, pos_all, quat_all, sDes_tr_all, Ts, para
     v = F_rep[:,1]
     w = F_rep[:,2]
 
-    if (config.orient == "NED"):
+    if (orient == "NED"):
         z = -z
         zDes = -zDes
         z_wp = -z_wp
@@ -48,7 +48,8 @@ def sameAxisAnimation(t_all, waypoints, pos_all, quat_all, sDes_tr_all, Ts, para
 
     fig = plt.figure()
     ax = plt.axes(projection = '3d')
-    ax.view_init(elev=45., azim=-20)
+    ax.view_init(elev=-6., azim=15)
+    ax.dist = 8
     line1, = ax.plot([], [], [], lw=2, color='red')
     line2, = ax.plot([], [], [], lw=2, color='blue')
     line3, = ax.plot([], [], [], '--', lw=1, color='blue')
@@ -62,9 +63,9 @@ def sameAxisAnimation(t_all, waypoints, pos_all, quat_all, sDes_tr_all, Ts, para
     
     ax.set_xlim3d([mid_x-maxRange, mid_x+maxRange])
     ax.set_xlabel('X')
-    if (config.orient == "NED"):
+    if (orient == "NED"):
         ax.set_ylim3d([mid_y+maxRange, mid_y-maxRange])
-    elif (config.orient == "ENU"):
+    elif (orient == "ENU"):
         ax.set_ylim3d([mid_y-maxRange, mid_y+maxRange])
     ax.set_ylabel('Y')
     ax.set_zlim3d([mid_z-maxRange, mid_z+maxRange])
@@ -81,7 +82,7 @@ def sameAxisAnimation(t_all, waypoints, pos_all, quat_all, sDes_tr_all, Ts, para
         ax.scatter(x_wp, y_wp, z_wp, color='green', alpha=1, marker = 'o', s = 25)
         ax.scatter(x_pf, y_pf, z_pf, color='orange', alpha=0.5, marker = 's', s = 15)
         # withinfield = ax.scatter([], [], [], color='red', alpha=1, marker = '*', s = 25)
-        withinfield, = ax.plot([], [], [], linestyle="", marker="o", color='red', markersize=10)
+        withinfield, = ax.plot([], [], [], linestyle="", marker="*", color='red', markersize=5)
         vector = ax.quiver(x[0],y[0],z[0],u[0],v[0],w[0], color='red')
         if (xyzType == 1 or xyzType == 12):
             trajType = 'Simple Waypoints'
@@ -133,7 +134,23 @@ def sameAxisAnimation(t_all, waypoints, pos_all, quat_all, sDes_tr_all, Ts, para
         pos = pos_all[i*numFrames]
         f = F_rep[i*numFrames]
         pts = fieldPointcloud[i*numFrames]
-        
+
+        if len(pts):
+            min_pt = pts.min(axis=0)
+            max_pt = pts.max(axis=0)
+            centre =  min_pt+abs(min_pt-max_pt)/2
+            centre_pt = min_pt+abs(min_pt-max_pt)/2
+            p1 = [centre_pt[0], centre_pt[1], max_pt[2]]
+            p2 = [max_pt[0], centre_pt[1], centre_pt[2]]
+            vn = np.cross(p1,p2)
+            goal = np.array([x_wp[-1], y_wp[-1], z_wp[-1]])
+            ray_dir = pos - goal
+            ndotu = vn.dot(ray_dir)
+            if abs(ndotu) > 1e-6:
+                w = pos - centre_pt
+                si = -vn.dot(w) / ndotu
+                Psi = w + si * ray_dir + centre_pt
+                pts = np.array([p1, p2, centre+vn/norm(vn), Psi])
 
         x = pos[0]
         y = pos[1]
@@ -153,7 +170,7 @@ def sameAxisAnimation(t_all, waypoints, pos_all, quat_all, sDes_tr_all, Ts, para
         
         quat = quat_all[i*numFrames]
     
-        if (config.orient == "NED"):
+        if (orient == "NED"):
             z = -z
             z_from0 = -z_from0
             quat = np.array([quat[0], -quat[1], -quat[2], quat[3]])
@@ -202,8 +219,8 @@ def sameAxisAnimation(t_all, waypoints, pos_all, quat_all, sDes_tr_all, Ts, para
     line_ani = animation.FuncAnimation(fig, updateLines, init_func=ini_plot, frames=len(t_all[0:-2:numFrames]), interval=(Ts*1000*numFrames), blit=False)
     
     if (ifsave):
-        # line_ani.save('animation_{0:.0f}_{1:.0f}.gif'.format(xyzType,yawType), dpi=80, writer='imagemagick', fps=25)
-        line_ani.save('animation_{0:.0f}_{1:.0f}.mp4'.format(xyzType,yawType), writer=animation.FFMpegWriter(fps=25, bitrate=1000))
+        line_ani.save('animation_{0}_{1}.gif'.format(xyzType,yawType), dpi=80, writer='imagemagick', fps=25)
+        # line_ani.save('animation_{0:.0f}_{1:.0f}.mp4'.format(xyzType,yawType), writer=animation.FFMpegWriter(fps=25, bitrate=1000))
         
     plt.show()
     return line_ani

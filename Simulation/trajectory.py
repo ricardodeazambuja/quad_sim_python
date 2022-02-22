@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-author: John Bass
+original author: John Bass
 email: john.bobzwik@gmail.com
 license: MIT
 Please feel free to use and modify this, but keep the above information. Thanks!
@@ -17,11 +17,10 @@ Please feel free to use and modify this, but keep the above information. Thanks!
 import numpy as np
 from numpy import pi
 from numpy.linalg import norm
-import config
 
 class Trajectory:
 
-    def __init__(self, quad, ctrlType, trajSelect, trajPoints, dist_consider_arrived=0.2):
+    def __init__(self, curr_heading, ctrlType, trajSelect, trajPoints, dist_consider_arrived=0.2):
 
         self.ctrlType = ctrlType
         self.xyzType = trajSelect[0]
@@ -75,7 +74,7 @@ class Trajectory:
             self.y_wps = np.zeros(len(self.t_wps))
         
         # Get initial heading
-        self.current_heading = quad.psi
+        self.current_heading = curr_heading
         
         # Initialize trajectory setpoint
         self.desPos = np.zeros(3)    # Desired position (x, y, z)
@@ -88,7 +87,7 @@ class Trajectory:
         self.sDes = np.hstack((self.desPos, self.desVel, self.desAcc, self.desThr, self.desEul, self.desPQR, self.desYawRate)).astype(float)
 
 
-    def desiredState(self, t, Ts, quad):
+    def desiredState(self, curr_pos, t, Ts):
         
         self.desPos = np.zeros(3)    # Desired position (x, y, z)
         self.desVel = np.zeros(3)    # Desired velocity (xdot, ydot, zdot)
@@ -177,7 +176,7 @@ class Trajectory:
                 self.t_idx = 0
                 self.end_reached = 0
             elif not(self.end_reached):
-                distance_to_next_wp = ((self.wps[self.t_idx,0]-quad.pos[0])**2 + (self.wps[self.t_idx,1]-quad.pos[1])**2 + (self.wps[self.t_idx,2]-quad.pos[2])**2)**(0.5)
+                distance_to_next_wp = ((self.wps[self.t_idx,0]-curr_pos[0])**2 + (self.wps[self.t_idx,1]-curr_pos[1])**2 + (self.wps[self.t_idx,2]-curr_pos[2])**2)**(0.5)
                 if (distance_to_next_wp < self.dist_consider_arrived):
                     self.t_idx += 1
                     if (self.t_idx >= (len(self.wps[:,0])-1)):    # if t_idx has reached the end of planned waypoints
@@ -195,7 +194,7 @@ class Trajectory:
             
             # If end is not reached, calculate distance to next waypoint
             elif not(self.end_reached):     
-                distance_to_next_wp = ((self.wps[self.t_idx,0]-quad.pos[0])**2 + (self.wps[self.t_idx,1]-quad.pos[1])**2 + (self.wps[self.t_idx,2]-quad.pos[2])**2)**(0.5)
+                distance_to_next_wp = ((self.wps[self.t_idx,0]-curr_pos[0])**2 + (self.wps[self.t_idx,1]-curr_pos[1])**2 + (self.wps[self.t_idx,2]-curr_pos[2])**2)**(0.5)
                 
                 # If waypoint distance is below a threshold, specify the arrival time and confirm arrival
                 if (distance_to_next_wp < self.dist_consider_arrived) and not self.arrived:
@@ -248,19 +247,19 @@ class Trajectory:
 
             if (self.xyzType == 1 or self.xyzType == 2 or self.xyzType == 12):
                 if (t == 0):
-                    self.desEul[2] = 0
+                    self.desEul[2] = self.current_heading
                 else:
                     # Calculate desired Yaw
-                    self.desEul[2] = np.arctan2(self.desPos[1]-quad.pos[1], self.desPos[0]-quad.pos[0])
+                    self.desEul[2] = np.arctan2(self.desPos[1]-curr_pos[1], self.desPos[0]-curr_pos[0])
             
             elif (self.xyzType == 13):
                 if (t == 0):
-                    self.desEul[2] = 0
+                    self.desEul[2] = self.current_heading
                     self.prevDesYaw = self.desEul[2]
                 else:
                     if not (self.arrived):
                         # Calculate desired Yaw
-                        self.desEul[2] = np.arctan2(self.desPos[1]-quad.pos[1], self.desPos[0]-quad.pos[0])
+                        self.desEul[2] = np.arctan2(self.desPos[1]-curr_pos[1], self.desPos[0]-curr_pos[0])
                         self.prevDesYaw = self.desEul[2]
                     else:
                         self.desEul[2] = self.prevDesYaw

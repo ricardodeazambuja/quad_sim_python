@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-author: John Bass
+original author: John Bass
 email: john.bobzwik@gmail.com
 license: MIT
 Please feel free to use and modify this, but keep the above information. Thanks!
 """
 
 import numpy as np
-from numpy import pi
-from numpy import sin, cos, tan, sqrt
 from numpy.linalg import norm
 
 
@@ -46,24 +44,23 @@ class PotField:
             self.pfFor = 1
 
     
-    def isWithinRange(self, quad):
+    def isWithinRange(self, curr_pos):
         # Determine which points are withing a certain range
         # to avoid computing things that are too far
         # ---------------------------
 
-        self.withinRange = (abs(quad.pos-self.pointcloud) <= self.rangeRadius).all(axis=1)
-        # self.withinRange = (abs(quad.pos[0]-self.pointcloud[:,0]) <= self.rangeRadius) & \
-        #                    (abs(quad.pos[1]-self.pointcloud[:,1]) <= self.rangeRadius) & \
-        #                    (abs(quad.pos[2]-self.pointcloud[:,2]) <= self.rangeRadius)
+        self.withinRange = (abs(curr_pos[0]-self.pointcloud[:,0]) <= self.rangeRadius) & \
+                           (abs(curr_pos[1]-self.pointcloud[:,1]) <= self.rangeRadius) & \
+                           (abs(curr_pos[2]-self.pointcloud[:,2]) <= self.rangeRadius)
         self.idx_withinRange = np.where(self.withinRange)[0]
         self.notWithinRange = ~(self.withinRange)
         self.idx_notWithinRange = np.where(self.notWithinRange)[0]
 
-    def isWithinField(self, quad):
+    def isWithinField(self, curr_pos):
         # Determine which points inside the first range is  
         # within the Potential Field Range
         # ---------------------------
-        distance = norm(self.pointcloud[self.idx_withinRange,:] - quad.pos, axis=1)
+        distance = norm(self.pointcloud[self.idx_withinRange,:] - curr_pos, axis=1)
         self.distance = distance
 
         withinField = distance <= self.fieldRadius
@@ -85,22 +82,24 @@ class PotField:
         self.fieldPointcloud = self.pointcloud[self.idx_withinField]
         self.fieldDistance = distance[np.where(withinField)[0]]
 
-    def rep_force(self, quad, traj):
+    def rep_force(self, curr_pos, des_pos):
+        self.isWithinRange(curr_pos)
+        self.isWithinField(curr_pos)
         
         # Repulsive Force
         # ---------------------------
-        F_rep_x = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(quad.pos[0] - self.fieldPointcloud[:,0])/self.fieldDistance
-        F_rep_y = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(quad.pos[1] - self.fieldPointcloud[:,1])/self.fieldDistance
-        F_rep_z = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(quad.pos[2] - self.fieldPointcloud[:,2])/self.fieldDistance
+        F_rep_x = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[0] - self.fieldPointcloud[:,0])/self.fieldDistance
+        F_rep_y = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[1] - self.fieldPointcloud[:,1])/self.fieldDistance
+        F_rep_z = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[2] - self.fieldPointcloud[:,2])/self.fieldDistance
 
         # Rotational Field
         # ---------------------------
         # Target vector
-        target_vect = traj.sDes[0:3] - quad.pos
+        target_vect = des_pos - curr_pos
         target_norm = norm(target_vect)
         if abs(target_norm) > 0.000001:
             # Obstacle vectors
-            obst_vect = self.fieldPointcloud - quad.pos
+            obst_vect = self.fieldPointcloud - curr_pos
             
             # Influence per point
             # Angle is obtained with angle = arccos(dot(u,v)/(norm(u)*norm(v)))
