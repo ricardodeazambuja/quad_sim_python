@@ -82,15 +82,19 @@ class PotField:
         self.fieldPointcloud = self.pointcloud[self.idx_withinField]
         self.fieldDistance = distance[np.where(withinField)[0]]
 
-    def rep_force(self, curr_pos, des_pos):
+    def rep_force(self, curr_pos, des_pos, rnd=np.array([0.1,0.1,0.1])):
         self.isWithinRange(curr_pos)
         self.isWithinField(curr_pos)
+
+        if any(rnd):
+            # Perturbation to avoid oscillating forever...
+            rnd = np.random.rand(3)*rnd/2-rnd/2
         
         # Repulsive Force
         # ---------------------------
-        F_rep_x = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[0] - self.fieldPointcloud[:,0])/self.fieldDistance
-        F_rep_y = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[1] - self.fieldPointcloud[:,1])/self.fieldDistance
-        F_rep_z = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[2] - self.fieldPointcloud[:,2])/self.fieldDistance
+        F_rep_x = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[0]+rnd[0] - self.fieldPointcloud[:,0])/self.fieldDistance
+        F_rep_y = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[1]+rnd[1] - self.fieldPointcloud[:,1])/self.fieldDistance
+        F_rep_z = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[2]+rnd[2] - self.fieldPointcloud[:,2])/self.fieldDistance
 
         # Rotational Field
         # ---------------------------
