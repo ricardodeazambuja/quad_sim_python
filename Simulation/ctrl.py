@@ -59,7 +59,7 @@ ctrl_params = {
             "Pr" : 1.0,
             "Dr" : 0.1,
 
-            # Max Velocities
+            # Max Velocities (x,y,z) [m/s]
             "uMax" : 5.0,
             "vMax" : 5.0,
             "wMax" : 5.0,
@@ -76,7 +76,7 @@ ctrl_params = {
 
             "minTotalVel_YawFollow" : 0.1,
 
-            "useIntegral" : bool(False)    # Include integral gains in linear velocity control
+            "useIntegral" : False    # Include integral gains in linear velocity control
             }
 
 class Controller:
@@ -117,10 +117,10 @@ class Controller:
 
         self.rateMax = np.array([self.pMax, self.qMax, self.rMax])
 
-        self.sDesCalc = np.zeros(16)
         self.w_cmd = np.ones(4)*self.quad_params["w_hover"]
         self.thr_int = np.zeros(3)
-        if (yawType == 0):
+        if (yawType == None):
+            # Leave Yaw "loose"
             self.att_P_gain[2] = 0
         self.setYawWeight()
         self.pos_sp        = np.zeros(3)
@@ -129,7 +129,6 @@ class Controller:
         self.thrust_sp     = np.zeros(3)
         self.thrust_rep_sp = np.zeros(3)
         self.eul_sp        = np.zeros(3)
-        self.pqr_sp        = np.zeros(3)
         self.yawFF         = 0.
 
         self.F_rep = np.zeros(3)
@@ -140,7 +139,7 @@ class Controller:
         self.prev_heading_sp = None
     
     def control(self, ctrlType, yawType, 
-                      pos_sp, vel_sp, acc_sp, thrust_sp, eul_sp, pqr_sp, yawFF,
+                      pos_sp, vel_sp, acc_sp, thrust_sp, eul_sp, yawFF,
                       pos, vel, vel_dot, quat, omega, omega_dot, psi, 
                       potfld, Ts):
 
@@ -165,7 +164,6 @@ class Controller:
         self.acc_sp    = acc_sp # traj.sDes[6:9]
         self.thrust_sp = thrust_sp # traj.sDes[9:12]
         self.eul_sp    = eul_sp # traj.sDes[12:15]
-        self.pqr_sp    = pqr_sp # traj.sDes[15:18]
         self.yawFF     = yawFF # traj.sDes[18]
 
         if self.prev_heading_sp == None:
@@ -194,25 +192,14 @@ class Controller:
             self.saturateVel()
             self.addFrepToVel(potfld)
             self.saturateVel()
-            self.yaw_follow(yawType, Ts)
+            if (yawType == "follow"):
+                # set Yaw setpoint and Yaw Rate Feed-Forward to follow the velocity setpoint
+                self.yaw_follow(Ts)
             self.z_vel_control(potfld, Ts)
             self.xy_vel_control(potfld, Ts)
             self.thrustToAttitude(potfld, Ts)
             self.attitude_control(Ts)
             self.rate_control(Ts)
-
-        # Mixer
-        # --------------------------- 
-        self.w_cmd = utils.mixerFM(norm(self.thrust_rep_sp), self.rateCtrl, 
-                                        self.quad_params["mixerFMinv"], self.quad_params["minWmotor"], self.quad_params["maxWmotor"])
-        
-        # Add calculated Desired States
-        # ---------------------------         
-        self.sDesCalc[0:3][:] = self.pos_sp
-        self.sDesCalc[3:6][:] = self.vel_sp
-        self.sDesCalc[6:9][:] = self.thrust_sp
-        self.sDesCalc[9:13][:] = self.qd
-        self.sDesCalc[13:16][:] = self.rate_sp
 
 
     def z_pos_control(self, potfld, Ts):
@@ -235,7 +222,7 @@ class Controller:
 
         # Saturate Velocity Setpoint
         # --------------------------- 
-        # Either saturate each velocity axis separately, or total velocity (prefered)
+        # Either saturate each velocity axis separately, or total velocity (preferred)
         if (self.saturateVel_separately):
             self.vel_sp = np.clip(self.vel_sp, -self.velMax, self.velMax)
         else:
@@ -250,12 +237,10 @@ class Controller:
         self.vel_sp += self.pfVel*self.F_rep
 
 
-    def yaw_follow(self, yawType, Ts):
+    def yaw_follow(self, Ts):
         
         # Generate Yaw setpoint and FF
         # ---------------------------
-        # If yawType == "Follow", then set Yaw setpoint and Yaw Rate Feed-Forward to follow the velocity setpoint
-        if (yawType == 4):
             totalVel_sp = norm(self.vel_sp)
             if (totalVel_sp > self.minTotalVel_YawFollow):
                 # Calculate desired Yaw

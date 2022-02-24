@@ -70,7 +70,7 @@ class Trajectory:
                 self.coeff_y = minSomethingTraj_faststop(self.wps[:,1], self.T_segment, self.deriv_order)
                 self.coeff_z = minSomethingTraj_faststop(self.wps[:,2], self.T_segment, self.deriv_order)
         
-        if (self.yawType == 4):
+        if (self.yawType == None):
             self.y_wps = np.zeros(len(self.t_wps))
         
         # Get initial heading
@@ -322,15 +322,15 @@ class Trajectory:
                 # List of possible yaw trajectories
                 # ---------------------------
                 # Set desired yaw at every t_wps[i]
-                if (self.yawType == 0):
+                if (self.yawType == None):
                     pass
-                elif (self.yawType == 1):
+                elif (self.yawType == "yaw_waypoint_timed"):
                     yaw_waypoint_timed()
                 # Interpolate yaw between every waypoint, to arrive at desired yaw every t_wps[i]
-                elif (self.yawType == 2):
+                elif (self.yawType == "yaw_waypoint_interp"):
                     yaw_waypoint_interp()
                 # Have the drone's heading match its desired velocity direction
-                elif (self.yawType == 3):
+                elif (self.yawType == "follow"):
                     yaw_follow()
 
                 self.sDes = np.hstack((self.desPos, self.desVel, self.desAcc, self.desThr, self.desEul, self.desPQR, self.desYawRate)).astype(float)

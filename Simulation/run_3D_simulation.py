@@ -9,6 +9,7 @@ Please feel free to use and modify this, but keep the above information. Thanks!
 import numpy as np
 import matplotlib.pyplot as plt
 import time
+from numpy.linalg import norm
 
 from trajectory import Trajectory
 from potentialField import PotField
@@ -61,7 +62,7 @@ def main():
     # Choose trajectory settings
     # --------------------------- 
     ctrlOptions = ["xyz_pos", "xy_vel_z_pos", "xyz_vel"]
-    trajSelect = np.zeros(3)
+    trajSelect = [0]*3
 
     # Select Control Type             (0: xyz_pos,                  1: xy_vel_z_pos,            2: xyz_vel)
     ctrlType = ctrlOptions[0]
@@ -73,8 +74,8 @@ def main():
     #                                 12: pos_waypoint_arrived     13: pos_waypoint_arrived_wait
     trajSelect[0] = 12         
 
-    # Select Yaw Trajectory Type      (0: none                      1: yaw_waypoint_timed,      2: yaw_waypoint_interp     3: follow          4: zero)
-    yawType = trajSelect[1] = 3           
+    # Select Yaw Trajectory Type      (0: none                      1: yaw_waypoint_timed,      2: yaw_waypoint_interp     3: follow
+    yawType = trajSelect[1] = "follow"           
 
     # Select if waypoint time is used, or if average speed is used to calculate waypoint time   (0: waypoint time,   1: average speed)
     trajSelect[2] = 1           
@@ -105,7 +106,6 @@ def main():
     quad = Quadcopter(Ti, init_states)
     traj = Trajectory(quad.psi, ctrlType, trajSelect, desired_traj, dist_consider_arrived=1)
     ctrl = Controller(quad.params, traj.yawType)
-    wind = Wind('None', 2.0, 90, -15)
 
 
     # Trajectory for First Desired States
@@ -124,10 +124,16 @@ def main():
 
     potfld.rep_force(quad.pos, desPos)
     ctrl.control(ctrlType, yawType, 
-                 desPos, desVel, desAcc, desThr, desEul, desPQR, desYawRate,
+                 desPos, desVel, desAcc, desThr, desEul, desYawRate,
                  quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
                  potfld, Ts)
-    
+
+    # Mixer (generates motor speeds)
+    # --------------------------- 
+    # It's passing the magnitude of the thrust, i.e. norm(thrust vector)
+    w_cmd = utils.mixerFM(norm(ctrl.thrust_rep_sp), ctrl.rateCtrl, 
+                                quad.params["mixerFMinv"], quad.params["minWmotor"], quad.params["maxWmotor"])
+
     # Initialize Result Matrixes
     # ---------------------------
     numTimeStep = int(Tf/Ts+1)
@@ -140,7 +146,6 @@ def main():
     omega_all      = []
     euler_all      = []
     sDes_traj_all  = []
-    sDes_calc_all  = []
     w_cmd_all      = []
     wMotor_all     = []
     thr_all        = []
@@ -156,7 +161,6 @@ def main():
     omega_all.append(quad.omega)
     euler_all.append(quad.euler)
     sDes_traj_all.append(traj.sDes)
-    sDes_calc_all.append(ctrl.sDesCalc)
     w_cmd_all.append(ctrl.w_cmd)
     wMotor_all.append(quad.wMotor)
     thr_all.append(quad.thr)
@@ -179,7 +183,8 @@ def main():
 
         # Dynamics (using last timestep's commands)
         # ---------------------------    
-        quad.update(t, Ts, ctrl.w_cmd, wind)
+        wind = [0,0,0]# Wind('RANDOMSINE', 10.0, 3, 45, -45, 45, -45).sampleWind(t)
+        quad.update(t, Ts, w_cmd, wind)
         t += Ts
 
         # Trajectory for Desired States 
@@ -193,15 +198,20 @@ def main():
         desAcc     = traj.sDes[6:9]
         desThr     = traj.sDes[9:12]
         desEul     = traj.sDes[12:15]
-        desPQR     = traj.sDes[15:18]
         desYawRate = traj.sDes[18]
 
         potfld = PotField(pfType=1, importedData=wall, rangeRadius=5, fieldRadius=3, kF=1)
         potfld.rep_force(quad.pos, desPos)
         ctrl.control(ctrlType, yawType, 
-                    desPos, desVel, desAcc, desThr, desEul, desPQR, desYawRate,
+                    desPos, desVel, desAcc, desThr, desEul, desYawRate,
                     quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
                     potfld, Ts)
+
+        # Mixer (generates motor speeds)
+        # --------------------------- 
+        # It's passing the magnitude of the thrust, i.e. norm(thrust vector)
+        w_cmd = utils.mixerFM(norm(ctrl.thrust_rep_sp), ctrl.rateCtrl, 
+                                   quad.params["mixerFMinv"], quad.params["minWmotor"], quad.params["maxWmotor"])
         
         # print("{:.3f}".format(t))
         t_all.append(t)
@@ -212,7 +222,6 @@ def main():
         omega_all.append(quad.omega)
         euler_all.append(quad.euler)
         sDes_traj_all.append(traj.sDes)
-        sDes_calc_all.append(ctrl.sDesCalc)
         w_cmd_all.append(ctrl.w_cmd)
         wMotor_all.append(quad.wMotor)
         thr_all.append(quad.thr)
@@ -237,7 +246,6 @@ def main():
     omega_all = np.asanyarray(omega_all)
     euler_all = np.asanyarray(euler_all)
     sDes_traj_all = np.asanyarray(sDes_traj_all)
-    sDes_calc_all = np.asanyarray(sDes_calc_all)
     w_cmd_all = np.asanyarray(w_cmd_all)
     wMotor_all = np.asanyarray(wMotor_all)
     thr_all = np.asanyarray(thr_all)
@@ -245,8 +253,6 @@ def main():
     potfld_all = np.asanyarray(potfld_all)
     fieldPointcloud = np.array(fieldPointcloud, dtype=object)
 
-    # utils.fullprint(sDes_traj_all[:,3:6])
-    # utils.makeFigures(quad.params, t_all, pos_all, vel_all, quat_all, omega_all, euler_all, w_cmd_all, wMotor_all, thr_all, tor_all, sDes_traj_all, sDes_calc_all)
     ani = utils.sameAxisAnimation(t_all, traj.wps, pos_all, quat_all, sDes_traj_all, Ts, quad.params, traj.xyzType, traj.yawType, ifsave, wall, potfld_all, fieldPointcloud)
 
 if __name__ == "__main__":

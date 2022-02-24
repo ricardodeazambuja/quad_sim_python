@@ -11,7 +11,7 @@ import numpy as np
 
 def mixerFM(thr, moment, mixerFMinv, minWmotor, maxWmotor):
     t = np.array([thr, moment[0], moment[1], moment[2]])
-    w_cmd = np.sqrt(np.clip(np.dot(mixerFMinv, t), minWmotor**2, maxWmotor**2))
+    w_cmd = np.sqrt(np.clip(np.dot(mixerFMinv, t), minWmotor**2, maxWmotor**2)) # clip before sqrt to avoid negative numbers
 
     return w_cmd
 

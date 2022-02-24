@@ -30,9 +30,9 @@ IB  = np.array([[Ixx, 0,   0  ],
 IRzz = 2.7e-5   # Rotor moment of inertia (kg*m^2)
 quad_params["mB"]   = 1.2    # mass (kg)
 quad_params["g"]    = 9.81   # gravity (m/s/s)
-quad_params["dxm"]  = 0.16   # arm length (m)
-quad_params["dym"]  = 0.16   # arm length (m)
-quad_params["dzm"]  = 0.05   # motor height (m)
+quad_params["dxm"]  = 0.16   # arm length (m) - between CG and front
+quad_params["dym"]  = 0.16   # arm length (m) - between CG and right
+quad_params["dzm"]  = 0.15   # motor height (m)
 quad_params["IB"]   = IB
 quad_params["invI"] = inv(IB)
 quad_params["IRzz"] = IRzz
@@ -69,7 +69,7 @@ class Quadcopter:
     def __init__(self, Ti, init_states=[0,0,0,0,0,0,0,0,0,0,0,0], orient = "NED", params = quad_params):
         # init_states: x0, y0, z0, phi0, theta0, psi0, xdot, ydot, zdot, p, q, r
 
-        self.orient = "NED"
+        self.orient = orient
         
         # Quad Params
         # ---------------------------
@@ -93,7 +93,7 @@ class Quadcopter:
         self.pos   = self.state[0:3]
         self.quat  = self.state[3:7]
         self.vel   = self.state[7:10]
-        self.omega = self.state[10:13]
+        self.omega = self.state[10:13] # body angular velocities
         self.wMotor = np.array([self.state[13], self.state[15], self.state[17], self.state[19]])
         self.vel_dot = np.zeros(3)
         self.omega_dot = np.zeros(3)
@@ -145,9 +145,9 @@ class Quadcopter:
         s[7]  = xdot
         s[8]  = ydot
         s[9]  = zdot
-        s[10] = p
-        s[11] = q
-        s[12] = r
+        s[10] = p # body angular velocities
+        s[11] = q # body angular velocities
+        s[12] = r # body angular velocities
 
         w_hover = self.params["w_hover"] # Hovering motor speed
         wdot_hover = 0.                  # Hovering motor acc
@@ -173,7 +173,7 @@ class Quadcopter:
         # A mixer like this one allows to find the exact RPM of each motor 
         # given a desired thrust and desired moments.
         # Inspiration for this mixer (or coefficient matrix) and how it is used : 
-        # https://link.springer.com/article/10.1007/s13369-017-2433-2 (https://sci-hub.tw/10.1007/s13369-017-2433-2)
+        # https://link.springer.com/article/10.1007/s13369-017-2433-2
         if (self.orient == "NED"):
             mixerFM = np.array([[    kTh,      kTh,      kTh,      kTh],
                                 [dym*kTh, -dym*kTh,  -dym*kTh, dym*kTh],
@@ -281,13 +281,9 @@ class Quadcopter:
 
         # Wind Model
         # ---------------------------
-        if wind == None:
-            [velW, qW1, qW2] = 0, 0, 0
-        else:    
-            [velW, qW1, qW2] = wind.randomWind(t)
-        # velW = 5           # m/s
-        # qW1 = 0*deg2rad    # Wind heading
-        # qW2 = 60*deg2rad   # Wind elevation (positive = upwards wind in NED, positive = downwards wind in ENU)
+        velW = wind[0] # [m/s]
+        qW1  = wind[1] # Wind heading [degrees]
+        qW2  = wind[2] # Wind elevation (positive = upwards wind in NED, positive = downwards wind in ENU) [degrees]
     
         # State Derivatives (from PyDy) This is already the analytically solved vector of MM*x = RHS
         # ---------------------------
@@ -352,7 +348,8 @@ class Quadcopter:
 
         return sdot
 
-    def update(self, t, Ts, cmd, wind=None):
+    def update(self, t, Ts, cmd, wind=[0,0,0]):
+        # cmd[4]: Motor rotation speed (rad/s)
 
         prev_vel   = self.vel
         prev_omega = self.omega

@@ -49,29 +49,29 @@ class Wind:
                 self.qW2_med  = ((qW2_max - qW2_min)*rd.random() + qW2_min)*deg2rad
 
             # Wind Velocity
-            self.velW_a1 = 1.5  # Wind velocity amplitude 1
+            self.velW_a1 = self.velW_med  # Wind velocity amplitude 1
             self.velW_f1 = 0.7  # Wind velocity frequency 1
             self.velW_d1 = 0    # Wind velocity delay (offset) 1
-            self.velW_a2 = 1.1  # Wind velocity amplitude 2
+            self.velW_a2 = self.velW_med  # Wind velocity amplitude 2
             self.velW_f2 = 1.2  # Wind velocity frequency 2
             self.velW_d2 = 1.3  # Wind velocity delay (offset) 2
-            self.velW_a3 = 0.8  # Wind velocity amplitude 3
+            self.velW_a3 = self.velW_med  # Wind velocity amplitude 3
             self.velW_f3 = 2.3  # Wind velocity frequency 3
             self.velW_d3 = 2.0  # Wind velocity delay (offset) 3
 
             # Wind Heading
-            self.qW1_a1  = 15.0*deg2rad # Wind heading amplitude 1
+            self.qW1_a1  = self.qW1_med # Wind heading amplitude 1
             self.qW1_f1  = 0.1          # Wind heading frequency 1
             self.qW1_d1  = 0            # Wind heading delay (offset) 1
-            self.qW1_a2  = 3.0*deg2rad  # Wind heading amplitude 2
+            self.qW1_a2  = self.qW1_med  # Wind heading amplitude 2
             self.qW1_f2  = 0.54         # Wind heading frequency 2
             self.qW1_d2  = 0            # Wind heading delay (offset) 2
 
             # Wind Elevation
-            self.qW2_a1  = 4.0*deg2rad  # Wind elevation amplitude 1
+            self.qW2_a1  = self.qW2_med  # Wind elevation amplitude 1
             self.qW2_f1  = 0.1          # Wind elevation frequency 1
             self.qW2_d1  = 0            # Wind elevation delay (offset) 1
-            self.qW2_a2  = 0.8*deg2rad  # Wind elevation amplitude 2
+            self.qW2_a2  = self.qW2_med  # Wind elevation amplitude 2
             self.qW2_f2  = 0.54         # Wind elevation frequency 2
             self.qW2_d2  = 0            # Wind elevation delay (offset) 2
         
@@ -92,7 +92,7 @@ class Wind:
             raise Exception('Not a valid wind type.')
 
 
-    def randomWind(self, t):
+    def sampleWind(self, t):
         if (self.windType == 'SINE') or (self.windType == 'RANDOMSINE'):
         
             velW = self.velW_a1*sin(self.velW_f1*t - self.velW_d1) + self.velW_a2*sin(self.velW_f2*t - self.velW_d2) + self.velW_a3*sin(self.velW_f3*t - self.velW_d3) + self.velW_med
