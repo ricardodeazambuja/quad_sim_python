@@ -18,14 +18,17 @@ from quad import Quadcopter
 from utils.windModel import Wind
 import utils
 
-deg2rad = np.pi/180.0
+ORIENT = "ENU"
+
+DEG2RAD = np.pi/180.0
 
 sim_hz = []
+
 
 def makeWaypoints(init_pose, wp, yaw, total_time=5):
     
     wp = np.vstack((init_pose[:3], wp)).astype(float)
-    yaw = np.hstack((init_pose[-1], yaw)).astype(float)*deg2rad
+    yaw = np.hstack((init_pose[-1], yaw)).astype(float)*DEG2RAD
 
     # For pos_waypoint_arrived_wait, this time will be the 
     # amount of time waiting
@@ -34,11 +37,6 @@ def makeWaypoints(init_pose, wp, yaw, total_time=5):
     v_average = dist/total_time
 
     return t, wp, yaw, v_average
-
-
-def quad_sim(t, Ts, quad, ctrl, wind, traj, potfld):
-
-    return t
     
 
 def main():
@@ -123,16 +121,16 @@ def main():
     desYawRate = traj.sDes[18]
 
     potfld.rep_force(quad.pos, desPos)
-    ctrl.control(ctrlType, yawType, 
-                 desPos, desVel, desAcc, desThr, desEul, desYawRate,
+
+    ctrl.control(Ts, ctrlType, yawType, 
+                 desPos, desVel, desAcc, desThr, desEul[2], desYawRate,
                  quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
-                 potfld, Ts)
+                 potfld.F_rep, potfld.pfVel, potfld.pfSatFor, potfld.pfFor)
 
     # Mixer (generates motor speeds)
     # --------------------------- 
-    # It's passing the magnitude of the thrust, i.e. norm(thrust vector)
     w_cmd = utils.mixerFM(norm(ctrl.thrust_rep_sp), ctrl.rateCtrl, 
-                                quad.params["mixerFMinv"], quad.params["minWmotor"], quad.params["maxWmotor"])
+                          quad.params["mixerFMinv"], quad.params["minWmotor"], quad.params["maxWmotor"])
 
     # Initialize Result Matrixes
     # ---------------------------
@@ -161,7 +159,7 @@ def main():
     omega_all.append(quad.omega)
     euler_all.append(quad.euler)
     sDes_traj_all.append(traj.sDes)
-    w_cmd_all.append(ctrl.w_cmd)
+    w_cmd_all.append(w_cmd)
     wMotor_all.append(quad.wMotor)
     thr_all.append(quad.thr)
     tor_all.append(quad.tor)
@@ -202,16 +200,15 @@ def main():
 
         potfld = PotField(pfType=1, importedData=wall, rangeRadius=5, fieldRadius=3, kF=1)
         potfld.rep_force(quad.pos, desPos)
-        ctrl.control(ctrlType, yawType, 
-                    desPos, desVel, desAcc, desThr, desEul, desYawRate,
-                    quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
-                    potfld, Ts)
 
+        ctrl.control(Ts, ctrlType, yawType, 
+                     desPos, desVel, desAcc, desThr, desEul[2], desYawRate,
+                     quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
+                     potfld.F_rep, potfld.pfVel, potfld.pfSatFor, potfld.pfFor)
         # Mixer (generates motor speeds)
         # --------------------------- 
-        # It's passing the magnitude of the thrust, i.e. norm(thrust vector)
         w_cmd = utils.mixerFM(norm(ctrl.thrust_rep_sp), ctrl.rateCtrl, 
-                                   quad.params["mixerFMinv"], quad.params["minWmotor"], quad.params["maxWmotor"])
+                              quad.params["mixerFMinv"], quad.params["minWmotor"], quad.params["maxWmotor"])
         
         # print("{:.3f}".format(t))
         t_all.append(t)
@@ -222,7 +219,7 @@ def main():
         omega_all.append(quad.omega)
         euler_all.append(quad.euler)
         sDes_traj_all.append(traj.sDes)
-        w_cmd_all.append(ctrl.w_cmd)
+        w_cmd_all.append(w_cmd)
         wMotor_all.append(quad.wMotor)
         thr_all.append(quad.thr)
         tor_all.append(quad.tor)

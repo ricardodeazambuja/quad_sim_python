@@ -47,7 +47,6 @@ ctrl_params = {
             "Pphi" : 8.0,
             "Ptheta" : 8.0,
             "Ppsi" : 1.5,
-            "PpsiStrong" : 8,
 
             # Rate P-D gains
             "Pp" : 1.5,
@@ -64,19 +63,20 @@ ctrl_params = {
             "vMax" : 5.0,
             "wMax" : 5.0,
 
-            "saturateVel_separately" : False,
+            "saturateVel_separately" : True,
 
-            # Max tilt
+            # Max tilt [degrees]
             "tiltMax" : 50.0,
 
-            # Max Rate
+            # Max Rate [rad/s]
             "pMax" : 200.0,
             "qMax" : 200.0,
             "rMax" : 150.0,
 
+             # Minimum velocity for yaw follow to kick in [m/s]
             "minTotalVel_YawFollow" : 0.1,
 
-            "useIntegral" : False    # Include integral gains in linear velocity control
+            "useIntegral" : True    # Include integral gains in linear velocity control
             }
 
 class Controller:
@@ -117,7 +117,6 @@ class Controller:
 
         self.rateMax = np.array([self.pMax, self.qMax, self.rMax])
 
-        self.w_cmd = np.ones(4)*self.quad_params["w_hover"]
         self.thr_int = np.zeros(3)
         if (yawType == None):
             # Leave Yaw "loose"
@@ -131,17 +130,13 @@ class Controller:
         self.eul_sp        = np.zeros(3)
         self.yawFF         = 0.
 
-        self.F_rep = np.zeros(3)
-        self.pfVel = 0
-        self.pfSatFor = 0
-        self.pfFor = 0
-
         self.prev_heading_sp = None
+
     
-    def control(self, ctrlType, yawType, 
-                      pos_sp, vel_sp, acc_sp, thrust_sp, eul_sp, yawFF,
+    def control(self, Ts, ctrlType, yawType, 
+                      pos_sp, vel_sp, acc_sp, thrust_sp, yaw_sp, yawFF,
                       pos, vel, vel_dot, quat, omega, omega_dot, psi, 
-                      potfld, Ts):
+                      F_rep=np.zeros(3), pfVel=0, pfSatFor=0, pfFor=0):
 
         self.pos = pos
         self.vel = vel
@@ -151,19 +146,13 @@ class Controller:
         self.omega_dot = omega_dot
         self.psi = psi
 
-        if potfld:
-            self.F_rep = potfld.F_rep
-            self.pfVel = potfld.pfVel
-            self.pfSatFor = potfld.pfSatFor
-            self.pfFor = potfld.pfFor
-
         # Desired State
         # ----------------
         self.pos_sp    = pos_sp # traj.sDes[0:3]
         self.vel_sp    = vel_sp # traj.sDes[3:6]
         self.acc_sp    = acc_sp # traj.sDes[6:9]
         self.thrust_sp = thrust_sp # traj.sDes[9:12]
-        self.eul_sp    = eul_sp # traj.sDes[12:15]
+        self.yaw_sp    = yaw_sp # traj.sDes[12:15]
         self.yawFF     = yawFF # traj.sDes[18]
 
         if self.prev_heading_sp == None:
@@ -173,36 +162,36 @@ class Controller:
         # ---------------------------
         if (ctrlType == "xyz_vel"):
             self.saturateVel()
-            self.z_vel_control(potfld, Ts)
-            self.xy_vel_control(potfld, Ts)
-            self.thrustToAttitude(potfld, Ts)
+            self.z_vel_control(pfSatFor, F_rep, Ts)
+            self.xy_vel_control(pfSatFor, F_rep, Ts)
+            self.thrustToAttitude(pfFor, F_rep)
             self.attitude_control(Ts)
             self.rate_control(Ts)
         elif (ctrlType == "xy_vel_z_pos"):
-            self.z_pos_control(potfld, Ts)
+            self.z_pos_control()
             self.saturateVel()
-            self.z_vel_control(potfld, Ts)
-            self.xy_vel_control(potfld, Ts)
-            self.thrustToAttitude(potfld, Ts)
+            self.z_vel_control(pfSatFor, F_rep, Ts)
+            self.xy_vel_control(pfSatFor, F_rep, Ts)
+            self.thrustToAttitude(pfFor, F_rep)
             self.attitude_control(Ts)
             self.rate_control(Ts)
         elif (ctrlType == "xyz_pos"):
-            self.z_pos_control(potfld, Ts)
-            self.xy_pos_control(potfld, Ts)
+            self.z_pos_control()
+            self.xy_pos_control()
             self.saturateVel()
-            self.addFrepToVel(potfld)
+            self.addFrepToVel(pfVel, F_rep)
             self.saturateVel()
             if (yawType == "follow"):
                 # set Yaw setpoint and Yaw Rate Feed-Forward to follow the velocity setpoint
                 self.yaw_follow(Ts)
-            self.z_vel_control(potfld, Ts)
-            self.xy_vel_control(potfld, Ts)
-            self.thrustToAttitude(potfld, Ts)
+            self.z_vel_control(pfSatFor, F_rep, Ts)
+            self.xy_vel_control(pfSatFor, F_rep, Ts)
+            self.thrustToAttitude(pfFor, F_rep)
             self.attitude_control(Ts)
             self.rate_control(Ts)
 
 
-    def z_pos_control(self, potfld, Ts):
+    def z_pos_control(self):
        
         # Z Position Control
         # --------------------------- 
@@ -210,7 +199,7 @@ class Controller:
         self.vel_sp[2] += self.pos_P_gain[2]*pos_z_error
         
     
-    def xy_pos_control(self, potfld, Ts):
+    def xy_pos_control(self):
 
         # XY Position Control
         # --------------------------- 
@@ -231,10 +220,10 @@ class Controller:
                 self.vel_sp = self.vel_sp/totalVel_sp*self.velMaxAll
     
     
-    def addFrepToVel(self, potfld):
+    def addFrepToVel(self, pfVel, F_rep):
 
         # Add repulsive force "velocity" to velocity setpoint
-        self.vel_sp += self.pfVel*self.F_rep
+        self.vel_sp += pfVel*F_rep
 
 
     def yaw_follow(self, Ts):
@@ -244,23 +233,23 @@ class Controller:
             totalVel_sp = norm(self.vel_sp)
             if (totalVel_sp > self.minTotalVel_YawFollow):
                 # Calculate desired Yaw
-                self.eul_sp[2] = np.arctan2(self.vel_sp[1], self.vel_sp[0])
+                self.yaw_sp = np.arctan2(self.vel_sp[1], self.vel_sp[0])
             
                 # Dirty hack, detect when desEul[2] switches from -pi to pi (or vice-versa) and switch manualy prev_heading_sp 
-                if (np.sign(self.eul_sp[2]) - np.sign(self.prev_heading_sp) and abs(self.eul_sp[2]-self.prev_heading_sp) >= 2*pi-0.1):
-                    self.prev_heading_sp = self.prev_heading_sp + np.sign(self.eul_sp[2])*2*pi
+                if (np.sign(self.yaw_sp) - np.sign(self.prev_heading_sp) and abs(self.yaw_sp-self.prev_heading_sp) >= 2*pi-0.1):
+                    self.prev_heading_sp = self.prev_heading_sp + np.sign(self.yaw_sp)*2*pi
             
                 # Angle between current vector with the next heading vector
-                delta_psi = self.eul_sp[2] - self.prev_heading_sp
+                delta_psi = self.yaw_sp - self.prev_heading_sp
             
                 # Set Yaw rate
                 self.yawFF = delta_psi / Ts 
 
                 # Prepare next iteration
-                self.prev_heading_sp = self.eul_sp[2]
+                self.prev_heading_sp = self.yaw_sp
 
 
-    def z_vel_control(self, potfld, Ts):
+    def z_vel_control(self, pfSatFor, F_rep, Ts):
         
         # Z Velocity Control (Thrust in D-direction)
         # ---------------------------
@@ -270,11 +259,11 @@ class Controller:
         if (self.orient == "NED"):
             thrust_z_sp = (self.vel_P_gain[2]*vel_z_error - self.vel_D_gain[2]*self.vel_dot[2] + 
                         self.quad_params["mB"]*(self.acc_sp[2] - self.quad_params["g"]) + 
-                        self.thr_int[2] + self.pfSatFor*self.F_rep[2])
+                        self.thr_int[2] + pfSatFor*F_rep[2])
         elif (self.orient == "ENU"):
             thrust_z_sp = (self.vel_P_gain[2]*vel_z_error - self.vel_D_gain[2]*self.vel_dot[2] + 
                         self.quad_params["mB"]*(self.acc_sp[2] + self.quad_params["g"]) + 
-                        self.thr_int[2] + self.pfSatFor*self.F_rep[2])
+                        self.thr_int[2] + pfSatFor*F_rep[2])
         
         # Get thrust limits
         if (self.orient == "NED"):
@@ -298,14 +287,14 @@ class Controller:
         self.thrust_sp[2] = np.clip(thrust_z_sp, uMin, uMax)
 
     
-    def xy_vel_control(self, potfld, Ts):
+    def xy_vel_control(self, pfSatFor, F_rep, Ts):
         
         # XY Velocity Control (Thrust in NE-direction)
         # ---------------------------
         vel_xy_error = self.vel_sp[0:2] - self.vel[0:2]
         thrust_xy_sp = (self.vel_P_gain[0:2]*vel_xy_error - self.vel_D_gain[0:2]*self.vel_dot[0:2] + 
                     self.quad_params["mB"]*(self.acc_sp[0:2]) + self.thr_int[0:2] + 
-                    self.pfSatFor*self.F_rep[0:2])
+                    pfSatFor*F_rep[0:2])
 
         # Max allowed thrust in NE based on tilt and excess thrust
         thrust_max_xy_tilt = abs(self.thrust_sp[2])*np.tan(self.tiltMax)
@@ -325,15 +314,12 @@ class Controller:
         self.thr_int[0:2] += self.vel_I_gain[0:2]*vel_err_lim*Ts * self.useIntegral
     
 
-    def thrustToAttitude(self, potfld, Ts):
+    def thrustToAttitude(self, pfFor, F_rep):
         # Create Full Desired Quaternion Based on Thrust Setpoint and Desired Yaw Angle
         # ---------------------------
 
         # Add potential field repulsive force to Thrust setpoint
-        self.thrust_rep_sp = self.thrust_sp + self.pfFor*self.F_rep
-
-        # Yaw setpoint
-        yaw_sp = self.eul_sp[2]
+        self.thrust_rep_sp = self.thrust_sp + pfFor*F_rep
 
         # Desired body_z axis direction
         body_z = -utils.vectNormalize(self.thrust_rep_sp)
@@ -341,7 +327,7 @@ class Controller:
             body_z = -body_z
         
         # Vector of desired Yaw direction in XY plane, rotated by pi/2 (fake body_y axis)
-        y_C = np.array([-sin(yaw_sp), cos(yaw_sp), 0.0])
+        y_C = np.array([-sin(self.yaw_sp), cos(self.yaw_sp), 0.0])
         
         # Desired body_x axis direction
         body_x = np.cross(y_C, body_z)

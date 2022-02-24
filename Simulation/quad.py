@@ -29,10 +29,10 @@ IB  = np.array([[Ixx, 0,   0  ],
 
 IRzz = 2.7e-5   # Rotor moment of inertia (kg*m^2)
 quad_params["mB"]   = 1.2    # mass (kg)
-quad_params["g"]    = 9.81   # gravity (m/s/s)
+quad_params["g"]    = 9.81   # gravity (m/s^2)
 quad_params["dxm"]  = 0.16   # arm length (m) - between CG and front
 quad_params["dym"]  = 0.16   # arm length (m) - between CG and right
-quad_params["dzm"]  = 0.15   # motor height (m)
+quad_params["dzm"]  = 0.05   # motor height (m)
 quad_params["IB"]   = IB
 quad_params["invI"] = inv(IB)
 quad_params["IRzz"] = IRzz
@@ -192,7 +192,7 @@ class Quadcopter:
         # Euler angles of current state
         YPR = utils.quatToYPR_ZYX(self.quat)
         self.euler = YPR[::-1] # flip YPR so that euler state = phi, theta, psi
-        self.heading = self.psi   = YPR[0] # around Z => Yaw
+        self.heading = self.psi = YPR[0] # around Z => Yaw
         self.theta = YPR[1] # around X => Roll
         self.phi   = YPR[2] # around Y => Pitch
         # https://en.wikipedia.org/wiki/Euler_angles#Tait%E2%80%93Bryan_angles
