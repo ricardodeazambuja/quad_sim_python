@@ -44,9 +44,9 @@ ctrl_params = {
             "Izdot" : 5.0,
 
             # Attitude P gains
-            "Pphi" : 8.0,
+            "Pphi"   : 8.0,
             "Ptheta" : 8.0,
-            "Ppsi" : 1.5,
+            "Ppsi"   : 1.5,
 
             # Rate P-D gains
             "Pp" : 1.5,
@@ -178,7 +178,6 @@ class Controller:
         elif (ctrlType == "xyz_pos"):
             self.z_pos_control()
             self.xy_pos_control()
-            self.saturateVel()
             self.addFrepToVel(pfVel, F_rep)
             self.saturateVel()
             if (yawType == "follow"):
@@ -222,8 +221,14 @@ class Controller:
     
     def addFrepToVel(self, pfVel, F_rep):
 
-        # Add repulsive force "velocity" to velocity setpoint
-        self.vel_sp += pfVel*F_rep
+        # Increase F_rep proportional to velocity towards the obstacle
+        # ...and F_rep magnitude.
+        if pfVel:
+            veldotf = np.dot(self.vel, F_rep)
+            F_rep_mult = -veldotf if veldotf < 0 else 0
+
+            # Add repulsive force "velocity" to velocity setpoint
+            self.vel_sp += F_rep*F_rep_mult
 
 
     def yaw_follow(self, Ts):
