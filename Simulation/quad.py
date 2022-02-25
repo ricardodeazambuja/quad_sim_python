@@ -50,14 +50,6 @@ quad_params["damp"]       = 1.0      # Value for second order system for Motor d
 
 quad_params["motorc1"]    = 8.49     # w (rad/s) = cmd*c1 + c0 (cmd in %)
 quad_params["motorc0"]    = 74.7
-# quad_params["motordeadband"] = 1   
-# quad_params["ifexpo"] = bool(False)
-# if quad_params["ifexpo"]:
-#     quad_params["maxCmd"] = 100      # cmd (%) min and max
-#     quad_params["minCmd"] = 0.01
-# else:
-#     quad_params["maxCmd"] = 100
-#     quad_params["minCmd"] = 1
 
 # Select whether to use gyroscopic precession of the rotors in the quadcopter dynamics
 # ---------------------------
@@ -131,8 +123,9 @@ class Quadcopter:
 
         quat = utils.YPRToQuat(psi0, theta0, phi0)
         
-        if (self.orient == "ENU"):
+        if (self.orient == "NED"):
             z0 = -z0
+            zdot = -zdot
 
         s = np.zeros(21)
         s[0]  = x0       # x
