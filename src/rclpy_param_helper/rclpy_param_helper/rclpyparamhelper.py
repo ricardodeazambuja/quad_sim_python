@@ -1,7 +1,7 @@
 """Convert between Python dictionary and ROS2 parameters
 https://docs.ros2.org/latest/api/rclpy/api/parameters.html
 
-We don't have matrices for parameters, so it declares a parameter named "<name>___shape" with the shape.
+ROS2 doesn't accept matrices as parameters, so we declare a parameter named "<name>___shape" with the shape.
 Arrays (and matrices) are converted to numpy arrays and they MUST use only one type: int, float, string, bool or byte.
 https://numpy.org/doc/stable/reference/generated/numpy.dtype.char.html
 """
@@ -59,7 +59,7 @@ def Dict2ROS2Params(node, dictparams):
             node.get_logger().error(f"{value_type} is not supported!")
             raise TypeError(f"{value_type} is not supported!")
         
-        node.get_logger().info(f"{name} : {value} loaded as a parameter!")
+        node.get_logger().info(f"{name} : {value} set as a parameter!")
 
 
 def ROS2Params2Dict(node, node_name, parameter_names):
@@ -96,28 +96,20 @@ def ROS2Params2Dict(node, node_name, parameter_names):
         def get_params(parameter_names):
             return [param.to_parameter_msg().value for param in node.get_parameters(parameter_names)]
 
-
     response = get_params(parameter_names)
-    print(response)
 
     param_dict = {}
     shapes2retrieve = []
     for name, param in zip(parameter_names, response):
-        param_dict[name] = GetParamValue(param)
+        param_dict[name] = getattr(param, int2type[param.type].lower()+"_value")
         if "ARRAY" in int2type[param.type]:
             shapes2retrieve.append(name+"___shape")
     if shapes2retrieve:
         response = get_params(shapes2retrieve)
         for name, param in zip(shapes2retrieve, response):
             array_name = name[:len(name)-len("___shape")]
-            shape = GetParamValue(param)
+            shape = getattr(param, int2type[param.type].lower()+"_value")
             param_dict[array_name] = np.array(param_dict[array_name]).reshape(shape)
             print(array_name, shape)
 
     return param_dict
-
-
-def GetParamValue(param):
-    return getattr(param, int2type[param.type].lower()+"_value")
-
-    
