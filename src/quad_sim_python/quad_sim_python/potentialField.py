@@ -9,6 +9,8 @@ Please feel free to use and modify this, but keep the above information. Thanks!
 import numpy as np
 from numpy.linalg import norm
 
+import utils
+
 
 
 
@@ -82,19 +84,15 @@ class PotField:
         self.fieldPointcloud = self.pointcloud[self.idx_withinField]
         self.fieldDistance = distance[np.where(withinField)[0]]
 
-    def rep_force(self, curr_pos, des_pos, rnd=np.array([0.1,0.1,0.1])):
+    def rep_force(self, curr_pos, des_pos, curr_vel, fperpend=False):
         self.isWithinRange(curr_pos)
         self.isWithinField(curr_pos)
-
-        if any(rnd):
-            # Perturbation to avoid oscillating forever...
-            rnd = np.random.rand(3)*rnd/2-rnd/2
-        
+ 
         # Repulsive Force
         # ---------------------------
-        F_rep_x = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[0]+rnd[0] - self.fieldPointcloud[:,0])/self.fieldDistance
-        F_rep_y = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[1]+rnd[1] - self.fieldPointcloud[:,1])/self.fieldDistance
-        F_rep_z = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[2]+rnd[2] - self.fieldPointcloud[:,2])/self.fieldDistance
+        F_rep_x = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[0] - self.fieldPointcloud[:,0])/self.fieldDistance
+        F_rep_y = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[1] - self.fieldPointcloud[:,1])/self.fieldDistance
+        F_rep_z = self.k*(1/self.fieldDistance - 1/self.fieldRadius)*(1/(self.fieldDistance**2))*(curr_pos[2] - self.fieldPointcloud[:,2])/self.fieldDistance
 
         # Rotational Field
         # ---------------------------
@@ -119,3 +117,21 @@ class PotField:
             F_rep_z = np.multiply(F_rep_z, k_influence*np.abs(influence))
 
         self.F_rep = np.array([np.sum(F_rep_x), np.sum(F_rep_y), np.sum(F_rep_z)])
+
+        if fperpend:
+            # Turn off perpendicular perturbation if curr_vel not same direction
+            veldotf = np.dot(curr_vel, self.F_rep)
+            if veldotf < 0:
+                # Normal plane to F_rep at curr_pos
+                z = lambda x,y: (self.F_rep[0]*(x-curr_pos[0])+self.F_rep[1]*(y-curr_pos[1])-self.F_rep[2]*curr_pos[2])/-self.F_rep[2]
+                # Vector on plane z
+                vz = np.array([0,1,z(0,1)])-curr_pos
+                # Vector perpendicular to F_rep and vz
+                vp = np.cross(self.F_rep,vz)
+                vpmag = norm(vp)
+                if vpmag>0.1:
+                    # Adds a perpendicular vector that is 1/3 of original
+                    self.F_rep += (vp/vpmag)*norm(self.F_rep)/3
+
+            else:
+                self.F_rep *= 0

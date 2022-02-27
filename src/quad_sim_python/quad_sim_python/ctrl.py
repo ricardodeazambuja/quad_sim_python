@@ -16,7 +16,7 @@ import numpy as np
 from numpy import pi
 from numpy import sin, cos, sqrt
 from numpy.linalg import norm
-import utils
+import quad_sim_python.utils as utils
 
 rad2deg = 180.0/pi
 deg2rad = pi/180.0
@@ -85,8 +85,6 @@ class Controller:
 
         self.quad_params = quad_params
 
-        self.orient = orient
-
         self.saturateVel_separately = params["saturateVel_separately"]
 
         self.useIntegral = params["useIntegral"]
@@ -127,10 +125,23 @@ class Controller:
         self.acc_sp        = np.zeros(3)
         self.thrust_sp     = np.zeros(3)
         self.thrust_rep_sp = np.zeros(3)
-        self.eul_sp        = np.zeros(3)
         self.yawFF         = 0.
 
         self.prev_heading_sp = None
+
+        self.drone_z = np.zeros(3)
+
+        if (orient == "NED"):
+            self.z_mul = -1
+            # Get thrust limits (Z)   
+            # The Thrust limits are negated and swapped due to NED-frame
+            self.maxThr_Z = -self.quad_params["minThr"]
+            self.minThr_Z = -self.quad_params["maxThr"]
+        else:
+            self.z_mul = 1
+            # Get thrust limits (Z)
+            self.maxThr_Z = self.quad_params["maxThr"]
+            self.minThr_Z = self.quad_params["minThr"] 
 
     
     def control(self, Ts, ctrlType, yawType, 
@@ -148,36 +159,45 @@ class Controller:
 
         # Desired State
         # ----------------
-        self.pos_sp    = pos_sp # traj.sDes[0:3]
-        self.vel_sp    = vel_sp # traj.sDes[3:6]
-        self.acc_sp    = acc_sp # traj.sDes[6:9]
-        self.thrust_sp = thrust_sp # traj.sDes[9:12]
-        self.yaw_sp    = yaw_sp # traj.sDes[12:15]
-        self.yawFF     = yawFF # traj.sDes[18]
+        self.pos_sp[:]    = pos_sp[:] 
+        self.vel_sp[:]    = vel_sp[:] 
+        self.acc_sp[:]    = acc_sp[:] 
+        self.thrust_sp[:] = thrust_sp[:] 
+        self.yaw_sp       = yaw_sp 
+        self.yawFF        = yawFF
 
         if self.prev_heading_sp == None:
             self.prev_heading_sp = self.psi
 
+        # Rotation Matrix of current state (Direct Cosine Matrix)
+        dcm = utils.quat2Dcm(self.quat)
+
+        # Current thrust (drone) orientation
+        self.drone_z = dcm[:,2]
+
         # Select Controller
         # ---------------------------
+        # The controller first calculates a thrust vector using the world frame.
+        # Then it tries to align the drone to that vector.
         if (ctrlType == "xyz_vel"):
             self.saturateVel()
             self.z_vel_control(pfSatFor, F_rep, Ts)
             self.xy_vel_control(pfSatFor, F_rep, Ts)
             self.thrustToAttitude(pfFor, F_rep)
-            self.attitude_control(Ts)
-            self.rate_control(Ts)
+            self.attitude_control()
+            self.rate_control()
         elif (ctrlType == "xy_vel_z_pos"):
             self.z_pos_control()
             self.saturateVel()
             self.z_vel_control(pfSatFor, F_rep, Ts)
             self.xy_vel_control(pfSatFor, F_rep, Ts)
             self.thrustToAttitude(pfFor, F_rep)
-            self.attitude_control(Ts)
-            self.rate_control(Ts)
+            self.attitude_control()
+            self.rate_control()
         elif (ctrlType == "xyz_pos"):
             self.z_pos_control()
             self.xy_pos_control()
+            self.saturateVel() # to give more authority to F_rep
             self.addFrepToVel(pfVel, F_rep)
             self.saturateVel()
             if (yawType == "follow"):
@@ -186,8 +206,8 @@ class Controller:
             self.z_vel_control(pfSatFor, F_rep, Ts)
             self.xy_vel_control(pfSatFor, F_rep, Ts)
             self.thrustToAttitude(pfFor, F_rep)
-            self.attitude_control(Ts)
-            self.rate_control(Ts)
+            self.attitude_control()
+            self.rate_control()
 
 
     def z_pos_control(self):
@@ -261,26 +281,16 @@ class Controller:
         # Hover thrust (m*g) is sent as a Feed-Forward term, in order to 
         # allow hover when the position and velocity error are nul
         vel_z_error = self.vel_sp[2] - self.vel[2]
-        if (self.orient == "NED"):
-            thrust_z_sp = (self.vel_P_gain[2]*vel_z_error - self.vel_D_gain[2]*self.vel_dot[2] + 
-                        self.quad_params["mB"]*(self.acc_sp[2] - self.quad_params["g"]) + 
-                        self.thr_int[2] + pfSatFor*F_rep[2])
-        elif (self.orient == "ENU"):
-            thrust_z_sp = (self.vel_P_gain[2]*vel_z_error - self.vel_D_gain[2]*self.vel_dot[2] + 
-                        self.quad_params["mB"]*(self.acc_sp[2] + self.quad_params["g"]) + 
-                        self.thr_int[2] + pfSatFor*F_rep[2])
-        
-        # Get thrust limits
-        if (self.orient == "NED"):
-            # The Thrust limits are negated and swapped due to NED-frame
-            uMax = -self.quad_params["minThr"]
-            uMin = -self.quad_params["maxThr"]
-        elif (self.orient == "ENU"):
-            uMax = self.quad_params["maxThr"]
-            uMin = self.quad_params["minThr"]
+
+        thrust_z_sp = (self.vel_P_gain[2]*vel_z_error - self.vel_D_gain[2]*self.vel_dot[2] +
+                       self.quad_params["mB"]*(self.acc_sp[2] + self.z_mul*self.quad_params['g']) +
+                       self.thr_int[2])
+
+        thrust_z_sp += pfSatFor*F_rep[2]
+    
 
         # Apply Anti-Windup in D-direction
-        stop_int_D = (thrust_z_sp >= uMax and vel_z_error >= 0.0) or (thrust_z_sp <= uMin and vel_z_error <= 0.0)
+        stop_int_D = (thrust_z_sp >= self.maxThr_Z and vel_z_error >= 0.0) or (thrust_z_sp <= self.minThr_Z and vel_z_error <= 0.0)
 
         # Calculate integral part
         if not (stop_int_D):
@@ -289,7 +299,7 @@ class Controller:
             self.thr_int[2] = min(abs(self.thr_int[2]), self.quad_params["maxThr"])*np.sign(self.thr_int[2])
 
         # Saturate thrust setpoint in D-direction
-        self.thrust_sp[2] = np.clip(thrust_z_sp, uMin, uMax)
+        self.thrust_sp[2] = np.clip(thrust_z_sp, self.minThr_Z, self.maxThr_Z)
 
     
     def xy_vel_control(self, pfSatFor, F_rep, Ts):
@@ -298,8 +308,9 @@ class Controller:
         # ---------------------------
         vel_xy_error = self.vel_sp[0:2] - self.vel[0:2]
         thrust_xy_sp = (self.vel_P_gain[0:2]*vel_xy_error - self.vel_D_gain[0:2]*self.vel_dot[0:2] + 
-                    self.quad_params["mB"]*(self.acc_sp[0:2]) + self.thr_int[0:2] + 
-                    pfSatFor*F_rep[0:2])
+                        self.quad_params["mB"]*(self.acc_sp[0:2]) + self.thr_int[0:2])
+
+        thrust_xy_sp += pfSatFor*F_rep[0:2]
 
         # Max allowed thrust in NE based on tilt and excess thrust
         thrust_max_xy_tilt = abs(self.thrust_sp[2])*np.tan(self.tiltMax)
@@ -313,7 +324,7 @@ class Controller:
             self.thrust_sp[0:2] = thrust_xy_sp/mag*thrust_max_xy
         
         # Use tracking Anti-Windup for NE-direction: during saturation, the integrator is used to unsaturate the output
-        # see Anti-Reset Windup for PID controllers, L.Rundqwist, 1990
+        # see Anti-Reset Windup for PID controllers, L.Rundqwist, 1990 - https://doi.org/10.1016/S1474-6670(17)51865-0
         arw_gain = 2.0/self.vel_P_gain[0:2]
         vel_err_lim = vel_xy_error - (thrust_xy_sp - self.thrust_sp[0:2])*arw_gain
         self.thr_int[0:2] += self.vel_I_gain[0:2]*vel_err_lim*Ts * self.useIntegral
@@ -327,9 +338,7 @@ class Controller:
         self.thrust_rep_sp = self.thrust_sp + pfFor*F_rep
 
         # Desired body_z axis direction
-        body_z = -utils.vectNormalize(self.thrust_rep_sp)
-        if (self.orient == "ENU"):
-            body_z = -body_z
+        body_z = self.z_mul*utils.vectNormalize(self.thrust_rep_sp)
         
         # Vector of desired Yaw direction in XY plane, rotated by pi/2 (fake body_y axis)
         y_C = np.array([-sin(self.yaw_sp), cos(self.yaw_sp), 0.0])
@@ -348,21 +357,15 @@ class Controller:
         self.qd_full = utils.RotToQuat(R_sp)
         
         
-    def attitude_control(self, Ts):
+    def attitude_control(self):
 
-        # Rotation Matrix of current state (Direct Cosine Matrix)
-        dcm = utils.quat2Dcm(self.quat)
-
-        # Current thrust orientation e_z and desired thrust orientation e_z_d
-        e_z = dcm[:,2]
-        e_z_d = -utils.vectNormalize(self.thrust_rep_sp)
-        if (self.orient == "ENU"):
-            e_z_d = -e_z_d
+        # Desired thrust orientation
+        drone_z_desired = self.z_mul*utils.vectNormalize(self.thrust_rep_sp)
 
         # Quaternion error between the 2 vectors
         qe_red = np.zeros(4)
-        qe_red[0] = np.dot(e_z, e_z_d) + sqrt(norm(e_z)**2 * norm(e_z_d)**2)
-        qe_red[1:4] = np.cross(e_z, e_z_d)
+        qe_red[0] = np.dot(self.drone_z, drone_z_desired) + sqrt(norm(self.drone_z)**2 * norm(drone_z_desired)**2)
+        qe_red[1:4] = np.cross(self.drone_z, drone_z_desired)
         qe_red = utils.vectNormalize(qe_red)
         
         # Reduced desired quaternion (reduced because it doesn't consider the desired Yaw angle)
@@ -391,7 +394,7 @@ class Controller:
         self.rate_sp = np.clip(self.rate_sp, -self.rateMax, self.rateMax)
 
 
-    def rate_control(self, Ts):
+    def rate_control(self):
         
         # Rate Control
         # ---------------------------

@@ -7,39 +7,27 @@ Please feel free to use and modify this, but keep the above information. Thanks!
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 import time
 from numpy.linalg import norm
 
-from trajectory import Trajectory
 from potentialField import PotField
 from ctrl import Controller
 from quad import Quadcopter
 from utils.windModel import Wind
 import utils
+import disp
 
 ORIENT = "ENU"
 
 DEG2RAD = np.pi/180.0
 
+DIAG_IDS = np.diag_indices(3)
+
 sim_hz = []
 
 
-def makeWaypoints(init_pose, wp, yaw, total_time=5):
-    
-    wp = np.vstack((init_pose[:3], wp)).astype(float)
-    yaw = np.hstack((init_pose[-1], yaw)).astype(float)*DEG2RAD
-
-    # For pos_waypoint_arrived_wait, this time will be the 
-    # amount of time waiting
-    t = np.linspace(0, total_time, wp.shape[0])
-    dist = np.sum([((i-e)**2)**0.5 for i,e in zip(wp[:-1],wp[1:])])
-    v_average = dist/total_time
-
-    return t, wp, yaw, v_average
-    
-
 def main():
+
     # Simulation Setup
     # --------------------------- 
     Ti = 0 # init time
@@ -50,9 +38,9 @@ def main():
     # Ts = 0.0075 # 632Hz
     # Ts = 0.01 # 595Hz
     # Ts = 0.02 # 389Hz 
-    # the ode solver struggles to reach the min error 
+    # the ode (dopri5) solver struggles to reach the min error 
     # when Ts is too big, therefore it takes more iterations
-    Tf = 100 # max sim time
+    Tf = 30 # max sim time
     
     # save the animation
     ifsave = 0
@@ -60,81 +48,56 @@ def main():
     # Choose trajectory settings
     # --------------------------- 
     ctrlOptions = ["xyz_pos", "xy_vel_z_pos", "xyz_vel"]
-    trajSelect = [0]*3
 
     # Select Control Type             (0: xyz_pos,                  1: xy_vel_z_pos,            2: xyz_vel)
     ctrlType = ctrlOptions[0]
 
-    # Select Position Trajectory Type (0: hover,                    1: pos_waypoint_timed,      2: pos_waypoint_interp,    
-    #                                  3: minimum velocity          4: minimum accel,           5: minimum jerk,           6: minimum snap
-    #                                  7: minimum accel_stop        8: minimum jerk_stop        9: minimum snap_stop
-    #                                 10: minimum jerk_full_stop   11: minimum snap_full_stop
-    #                                 12: pos_waypoint_arrived     13: pos_waypoint_arrived_wait
-    trajSelect[0] = 12         
+    # Select Yaw Trajectory Type      (None, yaw_waypoint_timed, yaw_waypoint_interp, follow)
+    yawType = "yaw_waypoint_interp"
 
-    # Select Yaw Trajectory Type      (0: none                      1: yaw_waypoint_timed,      2: yaw_waypoint_interp     3: follow
-    yawType = trajSelect[1] = "follow"           
 
-    # Select if waypoint time is used, or if average speed is used to calculate waypoint time   (0: waypoint time,   1: average speed)
-    trajSelect[2] = 1           
-
-    print("Control type: {}".format(ctrlType))
+    print(f"Control type: {ctrlType} -  Yaw type: {yawType}")
 
     # Initialize Quadcopter, Controller, Wind, Result Matrixes
     # ---------------------------
-    init_pose = [10,10,-10,0,0,0] # in NED
-    init_twist = [0,0,-10,0,0,0] # in NED
+    init_pose = np.array([0,0,0,0,0*DEG2RAD,90*DEG2RAD]) # x0, y0, z0, phi0, theta0, psi0
+    init_twist = np.array([0,0,0,0,0,0]) # xdot, ydot, zdot, p, q, r
     init_states = np.hstack((init_pose,init_twist))
 
-    wp = np.array([[2, 2, -1],
-                   [-2, 3, -3],
-                   [-2, -1, -3],
-                   [3, -2, -1],
-                   [-3, 2, -1]])
-
-    yaw = np.array([10,
-                    20, 
-                   -90, 
-                   120, 
-                   45])
-    desired_traj = makeWaypoints(init_pose, wp, yaw, total_time=20)
-
     potfld = PotField(pfType=1,importedData=np.zeros((0,3),dtype=float))
-
-    quad = Quadcopter(Ti, init_states)
-    traj = Trajectory(quad.psi, ctrlType, trajSelect, desired_traj, dist_consider_arrived=1)
-    ctrl = Controller(quad.params, traj.yawType)
+    quad = Quadcopter(Ti, init_states, orient=ORIENT)
 
 
-    # Trajectory for First Desired States
-    # ---------------------------
-    traj.desiredState(quad.pos, 0, Ts)        
+    # Initialize trajectory setpoint
+    desPos = init_pose[:3]          # Desired position (x, y, z)
+    desVel = np.array([0., 0., 0.]) # Desired velocity (xdot, ydot, zdot)
+    desAcc = np.array([0., 0., 0.]) # Desired acceleration (xdotdot, ydotdot, zdotdot)
+    desThr = np.array([0., 0., 0.]) # Desired thrust in N-E-D directions (or E-N-U, if selected)
+    desYaw = 90*DEG2RAD
+    desYawRate = 30.0*np.pi/180     # Desired yaw speed
+    sDes = np.hstack((desPos, desVel, desAcc, desThr, desYaw, desYawRate)).astype(float)
+
+    ctrl = Controller(quad.params, yawType, orient=ORIENT)
+    potfld.rep_force(quad.pos, desPos, quad.vel)
+
 
     # Generate First Commands
     # ---------------------------
-    desPos     = traj.sDes[0:3]
-    desVel     = traj.sDes[3:6]
-    desAcc     = traj.sDes[6:9]
-    desThr     = traj.sDes[9:12]
-    desEul     = traj.sDes[12:15]
-    desPQR     = traj.sDes[15:18]
-    desYawRate = traj.sDes[18]
-
-    potfld.rep_force(quad.pos, desPos)
-
     ctrl.control(Ts, ctrlType, yawType, 
-                 desPos, desVel, desAcc, desThr, desEul[2], desYawRate,
+                 desPos, desVel, desAcc, desThr, desYaw, desYawRate,
                  quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
                  potfld.F_rep, potfld.pfVel, potfld.pfSatFor, potfld.pfFor)
 
     # Mixer (generates motor speeds)
     # --------------------------- 
-    w_cmd = utils.mixerFM(norm(ctrl.thrust_rep_sp), ctrl.rateCtrl, 
+    thurst_drone_z = norm(ctrl.thrust_rep_sp) #max(0,np.dot(ctrl.thrust_rep_sp,ctrl.drone_z))
+    moments_drone = 9.81*np.dot(quad.params["IB"], ctrl.rateCtrl)
+    # moments = 9.81*quad.params["IB"][DIAG_IDS]*ctrl.rateCtrl
+    w_cmd = utils.mixerFM(thurst_drone_z, moments_drone, 
                           quad.params["mixerFMinv"], quad.params["minWmotor"], quad.params["maxWmotor"])
-
+    
     # Initialize Result Matrixes
     # ---------------------------
-    numTimeStep = int(Tf/Ts+1)
 
     t_all          = []
     s_all          = []
@@ -158,25 +121,36 @@ def main():
     quat_all.append(quad.quat)
     omega_all.append(quad.omega)
     euler_all.append(quad.euler)
-    sDes_traj_all.append(traj.sDes)
+    sDes_traj_all.append(sDes)
     w_cmd_all.append(w_cmd)
     wMotor_all.append(quad.wMotor)
     thr_all.append(quad.thr)
     tor_all.append(quad.tor)
     potfld_all.append(potfld.F_rep)
     fieldPointcloud.append(potfld.fieldPointcloud)
-
-    wall = np.random.rand(500,3)
-    wall[:,0] = wall[:,0]*5-2.5
-    wall[:,1] = 0
-    wall[:,2] = -wall[:,2]*5
+    
+    rs = np.random.RandomState() # just add a seed for reproducibility ...
+    wall = rs.normal(0, 1, size=(2000,3))
+    s = (wall**2).sum(axis=1)
+    print(s)
+    wall = wall[(s>0.9)*(s<1.1),:]
+    # wall = rs.rand(2000,3)*5-2.5
+    wall[:,1] += 6
+    # wall = np.empty((0,3)) # no wall
+    # l = 10
+    # wall[:,0] = wall[:,0]*l-l/2
+    # wall[:,1] = 0 #wall[:,0]*2-1
+    # wall[:,2] = -(wall[:,2]*l-l/2)
 
     # Run Simulation
     # ---------------------------
     t = Ti
     i = 1
     start_time = time.time()
-    while (round(t,3) < Tf) and (i < numTimeStep) and not (all(traj.desPos == traj.wps[-1,:]) and sum(abs(traj.wps[-1,:]-quad.pos)) <= traj.dist_consider_arrived):
+    final_pos = False
+    min_dist = 0.3
+    stop_vel = 0.05
+    while (round(t,3) < Tf) and not final_pos:
         t_ini = time.monotonic()
 
         # Dynamics (using last timestep's commands)
@@ -185,32 +159,36 @@ def main():
         quad.update(t, Ts, w_cmd, wind)
         t += Ts
 
-        # Trajectory for Desired States 
-        # ---------------------------
-        traj.desiredState(quad.pos, t, Ts)        
+        desPos = [0,10,0]
+        desVel = np.array([0., 0., 0.])
+        desAcc = np.array([0., 0., 0.])
+        desThr = np.array([0., 0., 0.])
+        desYaw = 90*DEG2RAD
+        desYawRate = 0#30.0*np.pi/180
+        sDes = np.hstack((desPos, desVel, desAcc, desThr, desYaw, desYawRate)).astype(float)
+
+        potfld = PotField(pfType=1, importedData=wall, rangeRadius=10, fieldRadius=5, kF=1)
+        potfld.rep_force(quad.pos, desPos, quad.vel)
 
         # Generate Commands (for next iteration)
         # ---------------------------
-        desPos     = traj.sDes[0:3]
-        desVel     = traj.sDes[3:6]
-        desAcc     = traj.sDes[6:9]
-        desThr     = traj.sDes[9:12]
-        desEul     = traj.sDes[12:15]
-        desYawRate = traj.sDes[18]
-
-        potfld = PotField(pfType=1, importedData=wall, rangeRadius=5, fieldRadius=3, kF=1)
-        potfld.rep_force(quad.pos, desPos)
-
         ctrl.control(Ts, ctrlType, yawType, 
-                     desPos, desVel, desAcc, desThr, desEul[2], desYawRate,
+                     desPos, desVel, desAcc, desThr, desYaw, desYawRate,
                      quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
                      potfld.F_rep, potfld.pfVel, potfld.pfSatFor, potfld.pfFor)
+
         # Mixer (generates motor speeds)
         # --------------------------- 
-        w_cmd = utils.mixerFM(norm(ctrl.thrust_rep_sp), ctrl.rateCtrl, 
+        thurst_drone_z = norm(ctrl.thrust_rep_sp) #max(0,np.dot(ctrl.thrust_rep_sp,ctrl.drone_z))
+        moments_drone = 9.81*np.dot(quad.params["IB"], ctrl.rateCtrl)
+        # moments = 9.81*quad.params["IB"][DIAG_IDS]*ctrl.rateCtrl
+        w_cmd = utils.mixerFM(thurst_drone_z, moments_drone, 
                               quad.params["mixerFMinv"], quad.params["minWmotor"], quad.params["maxWmotor"])
-        
-        # print("{:.3f}".format(t))
+
+        if i<500:
+            print(f"{t:.3f}","[{0:.3f},{1:.3f},{2:.3f}]".format(*ctrl.thrust_rep_sp), f"{thurst_drone_z,norm(ctrl.thrust_rep_sp)}")
+
+
         t_all.append(t)
         s_all.append(quad.state)
         pos_all.append(quad.pos)
@@ -218,7 +196,7 @@ def main():
         quat_all.append(quad.quat)
         omega_all.append(quad.omega)
         euler_all.append(quad.euler)
-        sDes_traj_all.append(traj.sDes)
+        sDes_traj_all.append(sDes)
         w_cmd_all.append(w_cmd)
         wMotor_all.append(quad.wMotor)
         thr_all.append(quad.thr)
@@ -228,6 +206,8 @@ def main():
         
         i += 1
         sim_hz.append(1/(time.monotonic()-t_ini))
+
+        final_pos = (abs(desPos-quad.pos).sum() < min_dist) and (norm(quad.vel) < stop_vel)
     
     total_time = time.time() - start_time
     print(f"Simulated {t:.2f}s in {total_time:.2f}s or {t/total_time:.2}X - sim_hz [max,min,avg]: {max(sim_hz):.4f},{min(sim_hz):.4f},{sum(sim_hz)/len(sim_hz):.4f}")
@@ -250,7 +230,9 @@ def main():
     potfld_all = np.asanyarray(potfld_all)
     fieldPointcloud = np.array(fieldPointcloud, dtype=object)
 
-    ani = utils.sameAxisAnimation(t_all, traj.wps, pos_all, quat_all, sDes_traj_all, Ts, quad.params, traj.xyzType, traj.yawType, ifsave, wall, potfld_all, fieldPointcloud)
+    # wall = np.empty((0,wall.shape[1])) # no wall
+    ani = disp.sameAxisAnimation(t_all, np.asanyarray([desPos]), pos_all, quat_all, sDes_traj_all, Ts, quad.params, 1, 
+                                  yawType, ifsave, wall, potfld_all, fieldPointcloud, orient=ORIENT)
 
 if __name__ == "__main__":
     main()

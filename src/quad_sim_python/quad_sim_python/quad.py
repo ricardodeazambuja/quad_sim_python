@@ -11,7 +11,7 @@ from numpy import sin, cos, pi, sign
 from scipy.integrate import ode
 from numpy.linalg import inv
 
-import utils
+import quad_sim_python.utils as utils
 
 deg2rad = pi/180.0
 
@@ -34,7 +34,7 @@ quad_params["dxm"]  = 0.16   # arm length (m) - between CG and front
 quad_params["dym"]  = 0.16   # arm length (m) - between CG and right
 quad_params["dzm"]  = 0.05   # motor height (m)
 quad_params["IB"]   = IB
-quad_params["invI"] = inv(IB)
+# quad_params["invI"] = inv(IB)
 quad_params["IRzz"] = IRzz
 
 quad_params["Cd"]         = 0.1      # https://en.wikipedia.org/wiki/Drag_coefficient
@@ -61,7 +61,11 @@ class Quadcopter:
     def __init__(self, Ti, init_states=[0,0,0,0,0,0,0,0,0,0,0,0], orient = "NED", params = quad_params):
         # init_states: x0, y0, z0, phi0, theta0, psi0, xdot, ydot, zdot, p, q, r
 
-        self.orient = orient
+        if (orient == "NED"):
+            self.z_mul = -1
+        else:
+            self.z_mul = 1
+
         
         # Quad Params
         # ---------------------------
@@ -123,9 +127,8 @@ class Quadcopter:
 
         quat = utils.YPRToQuat(psi0, theta0, phi0)
         
-        if (self.orient == "NED"):
-            z0 = -z0
-            zdot = -zdot
+        z0 = self.z_mul*z0
+        zdot = self.z_mul*zdot
 
         s = np.zeros(21)
         s[0]  = x0       # x
@@ -167,16 +170,10 @@ class Quadcopter:
         # given a desired thrust and desired moments.
         # Inspiration for this mixer (or coefficient matrix) and how it is used : 
         # https://link.springer.com/article/10.1007/s13369-017-2433-2
-        if (self.orient == "NED"):
-            mixerFM = np.array([[    kTh,      kTh,      kTh,      kTh],
-                                [dym*kTh, -dym*kTh,  -dym*kTh, dym*kTh],
-                                [dxm*kTh,  dxm*kTh, -dxm*kTh, -dxm*kTh],
-                                [   -kTo,      kTo,     -kTo,      kTo]])
-        elif (self.orient == "ENU"):
-            mixerFM = np.array([[     kTh,      kTh,      kTh,     kTh],
-                                [ dym*kTh, -dym*kTh, -dym*kTh, dym*kTh],
-                                [-dxm*kTh, -dxm*kTh,  dxm*kTh, dxm*kTh],
-                                [     kTo,     -kTo,      kTo,    -kTo]])
+        mixerFM = np.array([[     kTh,                   kTh,            kTh,             kTh],
+                            [ dym*kTh,              -dym*kTh,       -dym*kTh,         dym*kTh],
+                            [-dxm*kTh,              -dxm*kTh,        dxm*kTh,         dxm*kTh],
+                            [self.z_mul*kTo, -self.z_mul*kTo, self.z_mul*kTo, -self.z_mul*kTo]])
         
         
         return mixerFM
@@ -251,12 +248,10 @@ class Quadcopter:
 
         # Motor Dynamics and Rotor forces (Second Order System: https://apmonitor.com/pdc/index.php/Main/SecondOrderSystems)
         # ---------------------------
-        
-        uMotor = cmd
-        wddotM1 = (-2.0*damp*tau*wdotM1 - wM1 + kp*uMotor[0])/(tau**2)
-        wddotM2 = (-2.0*damp*tau*wdotM2 - wM2 + kp*uMotor[1])/(tau**2)
-        wddotM3 = (-2.0*damp*tau*wdotM3 - wM3 + kp*uMotor[2])/(tau**2)
-        wddotM4 = (-2.0*damp*tau*wdotM4 - wM4 + kp*uMotor[3])/(tau**2)
+        wddotM1 = (-2.0*damp*tau*wdotM1 - wM1 + kp*cmd[0])/(tau**2)
+        wddotM2 = (-2.0*damp*tau*wdotM2 - wM2 + kp*cmd[1])/(tau**2)
+        wddotM3 = (-2.0*damp*tau*wdotM3 - wM3 + kp*cmd[2])/(tau**2)
+        wddotM4 = (-2.0*damp*tau*wdotM4 - wM4 + kp*cmd[3])/(tau**2)
     
         wMotor = np.array([wM1, wM2, wM3, wM4])
         wMotor = np.clip(wMotor, minWmotor, maxWmotor)
@@ -280,54 +275,41 @@ class Quadcopter:
     
         # State Derivatives (from PyDy) This is already the analytically solved vector of MM*x = RHS
         # ---------------------------
-        if (self.orient == "NED"):
-            DynamicsDot = np.array([
-                [                                                                                                                                   xdot],
-                [                                                                                                                                   ydot],
-                [                                                                                                                                   zdot],
-                [                                                                                                        -0.5*p*q1 - 0.5*q*q2 - 0.5*q3*r],
-                [                                                                                                         0.5*p*q0 - 0.5*q*q3 + 0.5*q2*r],
-                [                                                                                                         0.5*p*q3 + 0.5*q*q0 - 0.5*q1*r],
-                [                                                                                                        -0.5*p*q2 + 0.5*q*q1 + 0.5*q0*r],
-                [     (Cd*sign(velW*cos(qW1)*cos(qW2) - xdot)*(velW*cos(qW1)*cos(qW2) - xdot)**2 - 2*(q0*q2 + q1*q3)*(ThrM1 + ThrM2 + ThrM3 + ThrM4))/mB],
-                [     (Cd*sign(velW*sin(qW1)*cos(qW2) - ydot)*(velW*sin(qW1)*cos(qW2) - ydot)**2 + 2*(q0*q1 - q2*q3)*(ThrM1 + ThrM2 + ThrM3 + ThrM4))/mB],
-                [ (-Cd*sign(velW*sin(qW2) + zdot)*(velW*sin(qW2) + zdot)**2 - (ThrM1 + ThrM2 + ThrM3 + ThrM4)*(q0**2 - q1**2 - q2**2 + q3**2) + g*mB)/mB],
-                [                                    ((IByy - IBzz)*q*r - uP*IRzz*(wM1 - wM2 + wM3 - wM4)*q + ( ThrM1 - ThrM2 - ThrM3 + ThrM4)*dym)/IBxx], # uP activates or deactivates the use of gyroscopic precession.
-                [                                    ((IBzz - IBxx)*p*r + uP*IRzz*(wM1 - wM2 + wM3 - wM4)*p + ( ThrM1 + ThrM2 - ThrM3 - ThrM4)*dxm)/IByy], # Set uP to False if rotor inertia is not known (gyro precession has negigeable effect on drone dynamics)
-                [                                                                               ((IBxx - IByy)*p*q - TorM1 + TorM2 - TorM3 + TorM4)/IBzz]])
-        elif (self.orient == "ENU"):
-            DynamicsDot = np.array([
-                [                                                                                                                                   xdot],
-                [                                                                                                                                   ydot],
-                [                                                                                                                                   zdot],
-                [                                                                                                        -0.5*p*q1 - 0.5*q*q2 - 0.5*q3*r],
-                [                                                                                                         0.5*p*q0 - 0.5*q*q3 + 0.5*q2*r],
-                [                                                                                                         0.5*p*q3 + 0.5*q*q0 - 0.5*q1*r],
-                [                                                                                                        -0.5*p*q2 + 0.5*q*q1 + 0.5*q0*r],
-                [     (Cd*sign(velW*cos(qW1)*cos(qW2) - xdot)*(velW*cos(qW1)*cos(qW2) - xdot)**2 + 2*(q0*q2 + q1*q3)*(ThrM1 + ThrM2 + ThrM3 + ThrM4))/mB],
-                [     (Cd*sign(velW*sin(qW1)*cos(qW2) - ydot)*(velW*sin(qW1)*cos(qW2) - ydot)**2 - 2*(q0*q1 - q2*q3)*(ThrM1 + ThrM2 + ThrM3 + ThrM4))/mB],
-                [ (-Cd*sign(velW*sin(qW2) + zdot)*(velW*sin(qW2) + zdot)**2 + (ThrM1 + ThrM2 + ThrM3 + ThrM4)*(q0**2 - q1**2 - q2**2 + q3**2) - g*mB)/mB],
-                [                                    ((IByy - IBzz)*q*r + uP*IRzz*(wM1 - wM2 + wM3 - wM4)*q + ( ThrM1 - ThrM2 - ThrM3 + ThrM4)*dym)/IBxx], # uP activates or deactivates the use of gyroscopic precession.
-                [                                    ((IBzz - IBxx)*p*r - uP*IRzz*(wM1 - wM2 + wM3 - wM4)*p + (-ThrM1 - ThrM2 + ThrM3 + ThrM4)*dxm)/IByy], # Set uP to False if rotor inertia is not known (gyro precession has negigeable effect on drone dynamics)
-                [                                                                               ((IBxx - IBzz)*p*q + TorM1 - TorM2 + TorM3 - TorM4)/IBzz]])
-    
+        DynamicsDot = np.zeros(13)
+        DynamicsDot[0] = xdot
+        DynamicsDot[1] = ydot
+        DynamicsDot[2] = zdot
+        DynamicsDot[3] = -0.5*p*q1 - 0.5*q*q2 - 0.5*q3*r
+        DynamicsDot[4] =  0.5*p*q0 - 0.5*q*q3 + 0.5*q2*r
+        DynamicsDot[5] =  0.5*p*q3 + 0.5*q*q0 - 0.5*q1*r
+        DynamicsDot[6] = -0.5*p*q2 + 0.5*q*q1 + 0.5*q0*r
+        DynamicsDot[7] = (Cd*sign(velW*cos(qW1)*cos(qW2) - xdot)*(velW*cos(qW1)*cos(qW2) - xdot)**2 + self.z_mul*2*(q0*q2 + q1*q3)*(ThrM1 + ThrM2 + ThrM3 + ThrM4))/mB
+        DynamicsDot[8] = (Cd*sign(velW*sin(qW1)*cos(qW2) - ydot)*(velW*sin(qW1)*cos(qW2) - ydot)**2 - self.z_mul*2*(q0*q1 - q2*q3)*(ThrM1 + ThrM2 + ThrM3 + ThrM4))/mB
+        DynamicsDot[9] = (-Cd*sign(velW*sin(qW2) + zdot)*(velW*sin(qW2) + zdot)**2 + self.z_mul*(ThrM1 + ThrM2 + ThrM3 + ThrM4)*(q0**2 - q1**2 - q2**2 + q3**2) - self.z_mul*g*mB)/mB
+        # uP activates or deactivates the use of gyroscopic precession.
+        # Set uP to False if rotor inertia is not known (gyro precession has negigeable effect on drone dynamics)
+        DynamicsDot[10] = ((IByy - IBzz)*q*r + self.z_mul*uP*IRzz*(wM1 - wM2 + wM3 - wM4)*q + ( ThrM1 - ThrM2 - ThrM3 + ThrM4)*dym)/IBxx
+        DynamicsDot[11] = ((IBzz - IBxx)*p*r - self.z_mul*uP*IRzz*(wM1 - wM2 + wM3 - wM4)*p + self.z_mul*(-ThrM1 - ThrM2 + ThrM3 + ThrM4)*dxm)/IByy
+        DynamicsDot[12] = ((IBxx - IBzz)*p*q + self.z_mul*(TorM1 - TorM2 + TorM3 - TorM4))/IBzz    
     
         # State Derivative Vector
         # ---------------------------
         sdot     = np.zeros([21])
-        sdot[0]  = DynamicsDot[0]
-        sdot[1]  = DynamicsDot[1]
-        sdot[2]  = DynamicsDot[2]
-        sdot[3]  = DynamicsDot[3]
-        sdot[4]  = DynamicsDot[4]
-        sdot[5]  = DynamicsDot[5]
-        sdot[6]  = DynamicsDot[6]
-        sdot[7]  = DynamicsDot[7]
-        sdot[8]  = DynamicsDot[8]
-        sdot[9]  = DynamicsDot[9]
-        sdot[10] = DynamicsDot[10]
-        sdot[11] = DynamicsDot[11]
-        sdot[12] = DynamicsDot[12]
+        sdot[0]  = xdot
+        sdot[1]  = ydot
+        sdot[2]  = zdot
+        sdot[3]  = -0.5*p*q1 - 0.5*q*q2 - 0.5*q3*r
+        sdot[4]  =  0.5*p*q0 - 0.5*q*q3 + 0.5*q2*r
+        sdot[5]  =  0.5*p*q3 + 0.5*q*q0 - 0.5*q1*r
+        sdot[6]  = -0.5*p*q2 + 0.5*q*q1 + 0.5*q0*r
+        sdot[7]  = (Cd*sign(velW*cos(qW1)*cos(qW2) - xdot)*(velW*cos(qW1)*cos(qW2) - xdot)**2 + self.z_mul*2*(q0*q2 + q1*q3)*(ThrM1 + ThrM2 + ThrM3 + ThrM4))/mB
+        sdot[8]  = (Cd*sign(velW*sin(qW1)*cos(qW2) - ydot)*(velW*sin(qW1)*cos(qW2) - ydot)**2 - self.z_mul*2*(q0*q1 - q2*q3)*(ThrM1 + ThrM2 + ThrM3 + ThrM4))/mB
+        sdot[9]  = (-Cd*sign(velW*sin(qW2) + zdot)*(velW*sin(qW2) + zdot)**2 + self.z_mul*(ThrM1 + ThrM2 + ThrM3 + ThrM4)*(q0**2 - q1**2 - q2**2 + q3**2) - self.z_mul*g*mB)/mB
+        # uP activates or deactivates the use of gyroscopic precession.
+        # Set uP to False if rotor inertia is not known (gyro precession has negigeable effect on drone dynamics)
+        sdot[10] = ((IByy - IBzz)*q*r + self.z_mul*uP*IRzz*(wM1 - wM2 + wM3 - wM4)*q + ( ThrM1 - ThrM2 - ThrM3 + ThrM4)*dym)/IBxx
+        sdot[11] = ((IBzz - IBxx)*p*r - self.z_mul*uP*IRzz*(wM1 - wM2 + wM3 - wM4)*p + self.z_mul*(-ThrM1 - ThrM2 + ThrM3 + ThrM4)*dxm)/IByy
+        sdot[12] = ((IBxx - IBzz)*p*q + self.z_mul*(TorM1 - TorM2 + TorM3 - TorM4))/IBzz    
         sdot[13] = wdotM1
         sdot[14] = wddotM1
         sdot[15] = wdotM2
@@ -342,7 +324,7 @@ class Quadcopter:
         return sdot
 
     def update(self, t, Ts, cmd, wind=[0,0,0]):
-        # cmd[4]: Motor rotation speed (rad/s)
+        # cmd: Motor rotation speed (rad/s)
 
         prev_vel   = self.vel
         prev_omega = self.omega
