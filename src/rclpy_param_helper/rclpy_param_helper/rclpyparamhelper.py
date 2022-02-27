@@ -110,6 +110,5 @@ def ROS2Params2Dict(node, node_name, parameter_names):
             array_name = name[:len(name)-len("___shape")]
             shape = getattr(param, int2type[param.type].lower()+"_value")
             param_dict[array_name] = np.array(param_dict[array_name]).reshape(shape)
-            print(array_name, shape)
 
     return param_dict
