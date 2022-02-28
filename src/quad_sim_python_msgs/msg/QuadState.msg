@@ -1,8 +1,8 @@
 float32 t
-geometry_msgs/Vector3 pos
-geometry_msgs/Quaternion quat
-geometry_msgs/Vector3 rpy
-geometry_msgs/Vector3 vel
-geometry_msgs/Vector3 vel_dot
-geometry_msgs/Vector3 omega
-geometry_msgs/Vector3 omega_dot
+float32[3] pos
+float32[4] quat
+float32[3] rpy
+float32[3] vel
+float32[3] vel_dot
+float32[3] omega
+float32[3] omega_dot

@@ -1,8 +1,8 @@
-std_msgs/String ctrltype
-std_msgs/String yawtype
-geometry_msgs/Vector3 pos
-geometry_msgs/Vector3 vel
-geometry_msgs/Vector3 acc
-geometry_msgs/Vector3 thr
-float32 yaw
-float32 yawrate
+string ctrltype "xyz_pos"
+string yawtype "default"
+float32[3] pos [0,0,0]
+float32[3] vel [0,0,0]
+float32[3] acc [0,0,0]
+float32[3] thr [0,0,0]
+float32 yaw 0
+float32 yawrate 0
