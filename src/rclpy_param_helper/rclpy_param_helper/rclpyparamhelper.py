@@ -9,6 +9,7 @@ import rclpy
 from rclpy.parameter import Parameter
 from rcl_interfaces.msg import ParameterDescriptor
 from rcl_interfaces.srv import GetParameters
+from ros2param.api import call_get_parameters
 import numpy as np
 
 type2int = {}
@@ -66,36 +67,38 @@ def ROS2Params2Dict(node, node_name, parameter_names):
 
     if node.get_name() != node_name:
         def get_params(parameter_names):
-            # create client
-            client = node.create_client(
-                GetParameters,
-                f'{node_name}/get_parameters')
+            response = call_get_parameters(node=node, node_name=node_name, parameter_names=parameter_names)
+            # # create client
+            # client = node.create_client(
+            #     GetParameters,
+            #     f'{node_name}/get_parameters')
 
-            # call as soon as ready
-            ready = client.wait_for_service(timeout_sec=5.0)
-            if not ready:
-                raise RuntimeError('Wait for service timed out')
+            # # call as soon as ready
+            # ready = client.wait_for_service(timeout_sec=5.0)
+            # if not ready:
+            #     raise RuntimeError('Wait for service timed out')
 
-            request = GetParameters.Request()
-            request.names = parameter_names
-            future = client.call_async(request)
-            rclpy.spin_until_future_complete(node, future)
+            # request = GetParameters.Request()
+            # request.names = parameter_names
+            # future = client.call_async(request)
+            # rclpy.spin_until_future_complete(node, future)
 
-            # handle response
-            response = future.result()
-            if response is None:
-                e = future.exception()
-                raise RuntimeError(
-                    f'Exception while calling service of node '
-                    "'{node_name}': {e}")
+            # # handle response
+            # response = future.result()
+            # if response is None:
+            #     e = future.exception()
+            #     raise RuntimeError(
+            #         f'Exception while calling service of node '
+            #         "'{node_name}': {e}")
             
-            node.destroy_client(client) # ignoring the response since it shouldn't return False, right???
+            # node.destroy_client(client) # ignoring the response since it shouldn't return False, right???
 
             return response.values
     else:
         def get_params(parameter_names):
             return [param.to_parameter_msg().value for param in node.get_parameters(parameter_names)]
 
+    # response is expected to follow the parameter_names order...
     response = get_params(parameter_names)
 
     param_dict = {}
