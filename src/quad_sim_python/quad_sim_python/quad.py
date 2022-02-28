@@ -34,7 +34,6 @@ quad_params["dxm"]  = 0.16   # arm length (m) - between CG and front
 quad_params["dym"]  = 0.16   # arm length (m) - between CG and right
 quad_params["dzm"]  = 0.05   # motor height (m)
 quad_params["IB"]   = IB
-# quad_params["invI"] = inv(IB)
 quad_params["IRzz"] = IRzz
 
 quad_params["Cd"]         = 0.1      # https://en.wikipedia.org/wiki/Drag_coefficient

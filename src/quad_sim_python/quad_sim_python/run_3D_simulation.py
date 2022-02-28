@@ -104,7 +104,7 @@ def main():
 
     quad = Quadcopter(Ti, init_states, orient=ORIENT)
     traj = Trajectory(quad.psi, ctrlType, trajSelect, desired_traj, dist_consider_arrived=1)
-    ctrl = Controller(quad.params, traj.yawType, orient=ORIENT)
+    ctrl = Controller(quad.params, orient=ORIENT)
 
 
     # Trajectory for First Desired States

@@ -77,7 +77,7 @@ def main():
     desYawRate = 30.0*np.pi/180     # Desired yaw speed
     sDes = np.hstack((desPos, desVel, desAcc, desThr, desYaw, desYawRate)).astype(float)
 
-    ctrl = Controller(quad.params, yawType, orient=ORIENT)
+    ctrl = Controller(quad.params, orient=ORIENT)
     potfld.rep_force(quad.pos, desPos, quad.vel)
 
 

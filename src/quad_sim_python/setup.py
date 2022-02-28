@@ -19,7 +19,7 @@ setup(
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
-        'console_scripts': [['quadsim = quad_sim_python.ros_quad_sim:main']
-        ],
+        'console_scripts': ['quadsim = quad_sim_python.ros_quad_sim:main',
+                            'quadctrl = quad_sim_python.ros_quad_ctrl:main'],
     },
 )

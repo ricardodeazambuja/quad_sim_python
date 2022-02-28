@@ -81,7 +81,7 @@ ctrl_params = {
 
 class Controller:
     
-    def __init__(self, quad_params, yawType, orient="NED", params=ctrl_params):
+    def __init__(self, quad_params, orient="NED", params=ctrl_params):
 
         self.quad_params = quad_params
 
@@ -116,10 +116,6 @@ class Controller:
         self.rateMax = np.array([self.pMax, self.qMax, self.rMax])
 
         self.thr_int = np.zeros(3)
-        if (yawType == None):
-            # Leave Yaw "loose"
-            self.att_P_gain[2] = 0
-        self.setYawWeight()
         self.pos_sp        = np.zeros(3)
         self.vel_sp        = np.zeros(3)
         self.acc_sp        = np.zeros(3)
@@ -146,7 +142,7 @@ class Controller:
     
     def control(self, Ts, ctrlType, yawType, 
                       pos_sp, vel_sp, acc_sp, thrust_sp, yaw_sp, yawFF,
-                      pos, vel, vel_dot, quat, omega, omega_dot, psi, 
+                      pos, vel, vel_dot, quat, omega, omega_dot, psi,
                       F_rep=np.zeros(3), pfVel=0, pfSatFor=0, pfFor=0):
 
         self.pos = pos
@@ -174,6 +170,12 @@ class Controller:
 
         # Current thrust (drone) orientation
         self.drone_z = dcm[:,2]
+
+
+        if (yawType == None):
+            # Leave Yaw "loose"
+            self.att_P_gain[2] = 0
+        self.setYawWeight()
 
         # Select Controller
         # ---------------------------

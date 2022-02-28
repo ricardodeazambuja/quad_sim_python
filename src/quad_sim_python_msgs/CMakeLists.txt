@@ -15,6 +15,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/QuadMotors.msg"
   "msg/QuadWind.msg"
   "msg/QuadControlSetPoint.msg"
+  "msg/QuadState.msg"
   DEPENDENCIES geometry_msgs
   DEPENDENCIES std_msgs
 )
