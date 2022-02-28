@@ -129,27 +129,27 @@ class QuadCtrl(Node):
         self.ctrl = Controller(self.quad_params, orient=self.quad_params['orient'], params=params)
 
         
-    def receive_control_sp_cb(self, msg):
+    def receive_control_sp_cb(self, sp_msg):
         if not self.started:
             self.start_ctrl()
             self.started = True
             self.get_logger().info(f'Controller started!')
 
         with self.ctrl_sp_lock:
-            self.curr_sp = msg
+            self.curr_sp = sp_msg
 
         self.get_logger().info(f'Received control setpoint: {self.curr_sp}')
 
 
 
-    def receive_quadstate_cb(self, msg):
+    def receive_quadstate_cb(self, state_msg):
         self.quad_state = True
         if self.t != None:
-            self.prev_t = self.t = msg.t
+            self.prev_t = self.t = state_msg.t
         else:
             self.prev_t = self.t
-            self.t = msg.t
-        self.get_logger().info(f'Received QuadState: {msg}')
+            self.t = state_msg.t
+        self.get_logger().info(f'Received QuadState: {state_msg}')
 
         if self.started:
             if self.ctrl_sp_lock.acquire(blocking=False):
@@ -159,7 +159,8 @@ class QuadCtrl(Node):
             self.ctrl.control((self.t-self.prev_t), self.prev_sp.ctrltype, self.prev_sp.yawtype, 
                                self.prev_sp.pos, self.prev_sp.vel, self.prev_sp.acc, self.prev_sp.thr, 
                                self.prev_sp.yaw, self.prev_sp.yawrate,
-                               msg.pos, msg.vel, msg.vel_dot, msg.quat, msg.omega, msg.omega_dot, msg.rpy[2])
+                               state_msg.pos, state_msg.vel, state_msg.vel_dot, 
+                               state_msg.quat, state_msg.omega, state_msg.omega_dot, state_msg.rpy[2])
 
             # Mixer (generates motor speeds)
             # --------------------------- 
@@ -167,12 +168,13 @@ class QuadCtrl(Node):
             moments_drone = 9.81*np.dot(self.quad_params["IB"], self.ctrl.rateCtrl)
             w_cmd = utils.mixerFM(thurst_drone_z, moments_drone, 
                                   self.quad_params["mixerFMinv"], self.quad_params["minWmotor"], self.quad_params["maxWmotor"])
-            msg = QuadMotors()
-            msg.m1 = int(w_cmd[0])
-            msg.m2 = int(w_cmd[1])
-            msg.m3 = int(w_cmd[2])
-            msg.m4 = int(w_cmd[3])
-            self.w_cmd_pub.publish(msg)
+            motor_msg = QuadMotors()
+            motor_msg.header.stamp = rclpy.time.Time().to_msg()
+            motor_msg.m1 = int(w_cmd[0])
+            motor_msg.m2 = int(w_cmd[1])
+            motor_msg.m3 = int(w_cmd[2])
+            motor_msg.m4 = int(w_cmd[3])
+            self.w_cmd_pub.publish(motor_msg)
 
 
 def main():

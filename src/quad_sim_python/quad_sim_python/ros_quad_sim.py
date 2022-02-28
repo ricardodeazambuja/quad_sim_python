@@ -2,6 +2,7 @@
 from threading import Lock
 import numpy as np
 
+from sensor_msgs.msg import Imu
 from geometry_msgs.msg import Pose
 from quad_sim_python_msgs.msg import QuadMotors, QuadWind, QuadState
 
@@ -82,7 +83,7 @@ class QuadSim(Node):
         self.sim_pub_lock = Lock()
 
         # pos[3], quat[4], rpy[3], vel[3], vel_dot[3], omega[3], omega_dot[3]
-        self.curr_state = np.zeros(22, dtype='float32')
+        self.curr_state = np.zeros(22, dtype='float64')
 
         self.wind = [0,0,0]
         self.prev_wind = [0,0,0]
@@ -94,11 +95,10 @@ class QuadSim(Node):
         if "init_pose" not in quad_params:
             # Look up for the transformation between target_frame and map_frame frames
             try:
-                now = rclpy.time.Time()
                 trans = self.tf_buffer.lookup_transform(
                     quad_params["map_frame"],
                     quad_params["target_frame"],
-                    now)
+                    rclpy.time.Time())
 
                 init_pos = [trans.transform.translation.x, 
                             trans.transform.translation.y, 
@@ -127,6 +127,7 @@ class QuadSim(Node):
 
         self.quadpos_pub = self.create_publisher(Pose, f'/carla/{quad_params["target_frame"]}/control/set_transform',1)
         self.quadstate_pub = self.create_publisher(QuadState, f'/quadsim/{quad_params["target_frame"]}/state',1)
+        self.imu_pub = self.create_publisher(Imu, f'/quadsim/{quad_params["target_frame"]}/imu/data',1)
 
         self.receive_w_cmd = self.create_subscription(
             QuadMotors,
@@ -155,19 +156,19 @@ class QuadSim(Node):
         self.sim_loop_timer = self.create_timer(self.Ts, self.on_sim_loop)
         self.sim_publish_timer = self.create_timer(params['Tp'], self.on_sim_publish)
 
-    def receive_w_cmd_cb(self, msg):
+    def receive_w_cmd_cb(self, motor_msg):
         with self.w_cmd_lock:
-            self.w_cmd = [msg.m1, 
-                          msg.m2,
-                          msg.m3,
-                          msg.m4]
+            self.w_cmd = [motor_msg.m1, 
+                          motor_msg.m2,
+                          motor_msg.m3,
+                          motor_msg.m4]
         self.get_logger().info(f'Received w_cmd: {self.w_cmd}')
 
-    def receive_wind_cb(self, msg):
+    def receive_wind_cb(self, wind_msg):
         with self.wind_lock:
-            self.wind = [msg.vel_w, 
-                         msg.head_w,
-                         msg.elev_w]
+            self.wind = [wind_msg.vel_w, 
+                         wind_msg.head_w,
+                         wind_msg.elev_w]
         self.get_logger().info(f'Received wind: {self.wind}')
 
     def on_sim_loop(self):
@@ -191,43 +192,46 @@ class QuadSim(Node):
         self.get_logger().info(f'Quad pos/vel: {self.quad.pos} / {self.quad.vel}')
 
     def on_sim_publish(self):
-        msg1 = Pose()
-        msg2 = QuadState()
+        pose_msg = Pose()
+        state_msg = QuadState()
+        imu_msg = Imu()
         with self.sim_pub_lock:
-            msg1.position.x = float(self.curr_state[0])
-            msg1.position.y = float(self.curr_state[1])
-            msg1.position.z = float(self.curr_state[2])
-            msg1.orientation.x = float(self.curr_state[3])
-            msg1.orientation.y = float(self.curr_state[4])
-            msg1.orientation.z = float(self.curr_state[5])
-            msg1.orientation.w = float(self.curr_state[6])
+            pose_msg.position.x = float(self.curr_state[0])
+            pose_msg.position.y = float(self.curr_state[1])
+            pose_msg.position.z = float(self.curr_state[2])
+            pose_msg.orientation.x = float(self.curr_state[3])
+            pose_msg.orientation.y = float(self.curr_state[4])
+            pose_msg.orientation.z = float(self.curr_state[5])
+            pose_msg.orientation.w = float(self.curr_state[6])
 
-            msg2.t = self.t
-            msg2.pos = self.curr_state[0:3][:]
-            msg2.quat = self.curr_state[3:7][:]
-            msg2.rpy = self.curr_state[7:10][:]
-            msg2.vel = self.curr_state[10:13][:]
-            msg2.vel_dot = self.curr_state[13:16][:]
-            msg2.omega = self.curr_state[16:19][:]
-            msg2.omega_dot = self.curr_state[19:22][:]
-        self.quadpos_pub.publish(msg1)
-        self.quadstate_pub.publish(msg2)
+            now = rclpy.time.Time().to_msg()
+            state_msg.header.stamp = now
+            state_msg.t = self.t
+            state_msg.pos = self.curr_state[0:3][:]
+            state_msg.quat = self.curr_state[3:7][:]
+            state_msg.rpy = self.curr_state[7:10][:]
+            state_msg.vel = self.curr_state[10:13][:]
+            state_msg.vel_dot = self.curr_state[13:16][:]
+            state_msg.omega = self.curr_state[16:19][:]
+            state_msg.omega_dot = self.curr_state[19:22][:]
+
+            imu_msg.header.stamp = now
+            imu_msg.orientation = pose_msg.orientation
+            imu_msg.angular_velocity.x = state_msg.omega[0]
+            imu_msg.angular_velocity.y = state_msg.omega[1]
+            imu_msg.angular_velocity.z = state_msg.omega[2]
+            imu_msg.linear_acceleration.x = state_msg.vel[0]
+            imu_msg.linear_acceleration.y = state_msg.vel[1]
+            imu_msg.linear_acceleration.z = state_msg.vel[2]
+
+        self.quadpos_pub.publish(pose_msg)
+        self.quadstate_pub.publish(state_msg)
+        self.imu_pub.publish(imu_msg)
         self.get_logger().debug(f'Quad State: {self.curr_state}')
 
 def main():
     print("Starting QuadSim...")
     rclpy.init()
-
-    # # First node will wait for the TF to be available
-    # temp_node = InitQuadSim()
-    # try:
-    #     rclpy.spin(temp_node)
-    # except KeyboardInterrupt:
-    #     pass
-    
-    # # Simulator will use the position previously acquired
-    # quad_node = QuadSim(temp_node.target_frame, init_pos=temp_node.output)
-    # temp_node.destroy_node()
 
     quad_node = QuadSim()
     try:

@@ -1,3 +1,5 @@
-float32 vel_w
-float32 head_w
-float32 elev_w
+std_msgs/Header header
+
+float64 vel_w
+float64 head_w
+float64 elev_w
