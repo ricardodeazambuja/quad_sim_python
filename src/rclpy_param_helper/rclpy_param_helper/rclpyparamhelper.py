@@ -42,15 +42,16 @@ def Dict2ROS2Params(node, dictparams):
         elif 'str' in value_type:
             params.append(Parameter(name=name, type_=Parameter.Type.STRING, value=value))
             # node.declare_parameter(name, value=value, descriptor=ParameterDescriptor(name=name, type=type2int["STRING"]))
-        elif 'ndarray' in value_type or 'list' in value_type or 'tuple' in value_type:
-            array_value = np.array(value)
-            list_value = array_value.ravel().tolist()
-            value_shape = array_value.shape
-            shape_descr = name + '___shape'
-            params.append(Parameter(name=shape_descr, type_=Parameter.Type.INTEGER_ARRAY, value=value_shape))
+        elif 'array' in value_type or 'list' in value_type or 'tuple' in value_type:
+            value = np.array(value)
+            list_value = value.ravel().tolist()
+            value_shape = value.shape
+            if len(value_shape)>1:
+                shape_descr = name + '___shape'
+                params.append(Parameter(name=shape_descr, type_=Parameter.Type.INTEGER_ARRAY, value=value_shape))
             # node.declare_parameter(shape_descr, value=value_shape, descriptor=ParameterDescriptor(name=name, type=type2int["INTEGER_ARRAY"]))
-            char_dtype = array_value.dtype.char
-            if   char_dtype.lower()=='l' or char_dtype.lower()=='i' or char_dtype.lower()=='h'  or char_dtype.lower()=='b':
+            char_dtype = value.dtype.char
+            if   char_dtype.lower()=='q' or char_dtype.lower()=='l' or char_dtype.lower()=='i' or char_dtype.lower()=='h'  or char_dtype.lower()=='b':
                 # uint becomes int...
                 params.append(Parameter(name=name, type_=Parameter.Type.INTEGER_ARRAY, value=list_value))
                 # param_descriptor = ParameterDescriptor(name=name, type=type2int["INTEGER_ARRAY"])
@@ -67,8 +68,8 @@ def Dict2ROS2Params(node, dictparams):
                 params.append(Parameter(name=name, type_=Parameter.Type.BYTE_ARRAY, value=list_value))
                 # param_descriptor = ParameterDescriptor(name=name, type=type2int["BYTE_ARRAY"])
             else:
-                node.get_logger().error(f"Array of {array_value.dtype} is not supported!")
-                raise TypeError(f"Array of {array_value.dtype} is not supported!")
+                node.get_logger().error(f"Array of {value.dtype, char_dtype} is not supported!")
+                raise TypeError(f"Array of {value.dtype, char_dtype} is not supported!")
 
             # node.declare_parameter(name, value=list_value, descriptor=param_descriptor)
         else:
@@ -133,7 +134,10 @@ def ROS2Params2Dict(node, node_name, parameter_names):
         response = get_params(shapes2retrieve)
         for name, param in zip(shapes2retrieve, response):
             array_name = name[:len(name)-len("___shape")]
-            shape = getattr(param, int2type[param.type].lower()+"_value")
-            param_dict[array_name] = np.array(param_dict[array_name]).reshape(shape)
+            if param.type: # NOT_SET is 0
+                shape = getattr(param, int2type[param.type].lower()+"_value")
+                param_dict[array_name] = np.array(param_dict[array_name]).reshape(shape)
+            else:
+                pass # the shape was not set, so it will be treated as 1D
 
     return param_dict
