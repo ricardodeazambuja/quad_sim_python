@@ -13,7 +13,7 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 
-from .quad import Quadcopter
+from quad_sim_python.quad import Quadcopter
 import quad_sim_python.utils as utils
 from rclpy_param_helper import Dict2ROS2Params, ROS2Params2Dict
 
