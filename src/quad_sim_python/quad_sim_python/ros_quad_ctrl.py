@@ -1,5 +1,6 @@
 
 from threading import Lock
+from copy import copy
 import numpy as np
 from numpy.linalg import norm
 
@@ -24,8 +25,8 @@ import quad_sim_python.utils as utils
 
 ctrl_params = {
             # Position P gains
-            "Py"    : 2.0,
             "Px"    : 2.0,
+            "Py"    : 2.0,
             "Pz"    : 1.0,
 
             # Velocity P-D gains
@@ -80,24 +81,38 @@ ctrl_params = {
 class QuadCtrl(Node):
 
     def __init__(self):
-        super().__init__('quadctrl')
+        super().__init__('quadctrl', 
+                         allow_undeclared_parameters=True, 
+                         automatically_declare_parameters_from_overrides=True)
 
         self.started = False
         self.quad_state = False
         self.t = None
 
         self.quadstate_lock = Lock()
+        self.ctrl_sp_lock = Lock()
 
-        # pos[3], quat[4], rpy[3], vel[3], vel_dot[3], omega[3], omega_dot[3]
-        self.curr_state = np.zeros(22)
         self.curr_sp = QuadControlSetPoint()
+        self.prev_sp = copy(self.curr_sp)
 
-        quad_params_list = ['mB', 'g', 'maxThr', 'minThr', 'orient', 'mixerFMinv', 'minWmotor', 'maxWmotor', 'target_frame', 'init_pos']
+        # Read ROS2 parameters the user may have set 
+        # E.g. (https://docs.ros.org/en/foxy/How-To-Guides/Node-arguments.html):
+        # --ros-args -p Px:=5)
+        # --ros-args --params-file params.yaml
+        read_params = ROS2Params2Dict(self, 'quadctrl', ctrl_params.keys())
+        for k,v in read_params.items():
+            # Update local parameters
+            ctrl_params[k] = v
+        
+        # Update ROS2 parameters
+        Dict2ROS2Params(self, ctrl_params) # the controller needs to read some parameters from here
+
+        quad_params_list = ['mB', 'g', 'IB', 'maxThr', 'minThr', 'orient', 'mixerFMinv', 'minWmotor', 'maxWmotor', 'target_frame']
         self.quad_params = ROS2Params2Dict(self, 'quadsim', quad_params_list)
 
         self.receive_control_sp = self.create_subscription(
             QuadControlSetPoint,
-            f"/quadctrl/{self.quad_params['target_frame']}/control/set_transform",
+            f"/quadctrl/{self.quad_params['target_frame']}/ctrl_sp",
             self.receive_control_sp_cb,
             1)
 
@@ -110,9 +125,8 @@ class QuadCtrl(Node):
         self.w_cmd_pub = self.create_publisher(QuadMotors, f"/quadsim/{self.quad_params['target_frame']}/w_cmd",1)
 
     def start_ctrl(self):
-        Dict2ROS2Params(self, ctrl_params)
-        ctrl_params = ROS2Params2Dict(self, 'quadctrl', ctrl_params.keys())
-        self.ctrl = Controller(self.quad_params, orient=self.quad_params['orient'], params=ctrl_params)
+        params = ROS2Params2Dict(self, 'quadctrl', ctrl_params.keys())
+        self.ctrl = Controller(self.quad_params, orient=self.quad_params['orient'], params=params)
 
         
     def receive_control_sp_cb(self, msg):
@@ -121,10 +135,10 @@ class QuadCtrl(Node):
             self.started = True
             self.get_logger().info(f'Controller started!')
 
-        with self.w_cmd_lock:
+        with self.ctrl_sp_lock:
             self.curr_sp = msg
 
-        self.get_logger().info(f'Received QuadState: {self.curr_state}')
+        self.get_logger().info(f'Received control setpoint: {self.curr_sp}')
 
 
 
@@ -135,38 +149,17 @@ class QuadCtrl(Node):
         else:
             self.prev_t = self.t
             self.t = msg.t
-
-        self.curr_state[0:3][0] = msg.pos.x
-        self.curr_state[0:3][1] = msg.pos.y
-        self.curr_state[0:3][2] = msg.pos.z
-        self.curr_state[3:7][0] = msg.quat.x
-        self.curr_state[3:7][1] = msg.quat.y
-        self.curr_state[3:7][2] = msg.quat.z
-        self.curr_state[3:7][3] = msg.quat.w
-        self.curr_state[7:10][0] = msg.rpy.x
-        self.curr_state[7:10][1] = msg.rpy.y
-        self.curr_state[7:10][2] = msg.rpy.z
-        self.curr_state[10:13][0] = msg.vel.x
-        self.curr_state[10:13][1] = msg.vel.y
-        self.curr_state[10:13][2] = msg.vel.z
-        self.curr_state[13:16][0] = msg.vel_dot.x
-        self.curr_state[13:16][1] = msg.vel_dot.y
-        self.curr_state[13:16][2] = msg.vel_dot.z
-        self.curr_state[16:19][0] = msg.omega.x
-        self.curr_state[16:19][1] = msg.omega.y
-        self.curr_state[16:19][2] = msg.omega.z
-        self.curr_state[19:22][0] = msg.omega_dot.x
-        self.curr_state[19:22][1] = msg.omega_dot.y
-        self.curr_state[19:22][2] = msg.omega_dot.z
-        self.get_logger().info(f'Received QuadState: {self.curr_state}')
+        self.get_logger().info(f'Received QuadState: {msg}')
 
         if self.started:
-            self.ctrl.control((self.t-self.prev_t), self.curr_sp.ctrltype, self.curr_sp.yawtype, 
-                               [self.curr_sp.pos.x,self.curr_sp.pos.y,self.curr_sp.pos.z], [self.curr_sp.vel.x,self.curr_sp.vel.y,self.curr_sp.vel.z], 
-                               [self.curr_sp.acc.x,self.curr_sp.acc.y,self.curr_sp.acc.z], [self.curr_sp.thr.x,self.curr_sp.thr.y,self.curr_sp.thr.z], 
-                               self.curr_sp.yaw, self.curr_sp.yawrate,
-                               self.curr_state[0:3], self.curr_state[10:13], self.curr_state[13:16], 
-                               self.curr_state[3:7], self.curr_state[16:19], self.curr_state[19:22], self.curr_state[7:10][2])
+            if self.ctrl_sp_lock.acquire(blocking=False):
+                self.prev_sp = self.curr_sp
+                self.ctrl_sp_lock.release()
+
+            self.ctrl.control((self.t-self.prev_t), self.prev_sp.ctrltype, self.prev_sp.yawtype, 
+                               self.prev_sp.pos, self.prev_sp.vel, self.prev_sp.acc, self.prev_sp.thr, 
+                               self.prev_sp.yaw, self.prev_sp.yawrate,
+                               msg.pos, msg.vel, msg.vel_dot, msg.quat, msg.omega, msg.omega_dot, msg.rpy[2])
 
             # Mixer (generates motor speeds)
             # --------------------------- 
@@ -175,11 +168,11 @@ class QuadCtrl(Node):
             w_cmd = utils.mixerFM(thurst_drone_z, moments_drone, 
                                   self.quad_params["mixerFMinv"], self.quad_params["minWmotor"], self.quad_params["maxWmotor"])
             msg = QuadMotors()
-            msg.m1 = w_cmd[0]
-            msg.m2 = w_cmd[1]
-            msg.m3 = w_cmd[2]
-            msg.m4 = w_cmd[3]
-            self.w_cmd_pub.pub(msg)
+            msg.m1 = int(w_cmd[0])
+            msg.m2 = int(w_cmd[1])
+            msg.m3 = int(w_cmd[2])
+            msg.m4 = int(w_cmd[3])
+            self.w_cmd_pub.publish(msg)
 
 
 def main():

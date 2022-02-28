@@ -14,6 +14,7 @@ from tf2_ros.transform_listener import TransformListener
 
 
 from .quad import Quadcopter
+import quad_sim_python.utils as utils
 from rclpy_param_helper import Dict2ROS2Params, ROS2Params2Dict
 
 quad_params = {}
@@ -51,96 +52,105 @@ quad_params["motorc0"]    = 74.7
 # Set to False if rotor inertia isn't known (gyro precession has negigeable effect on drone dynamics)
 quad_params["usePrecession"] = False
 
-quad_params["init_pos"] = [0,0,0]
-quad_params["Ts"] = 0.005
-quad_params["Tp"] = 1/50
+quad_params["Ts"] = 1/200 # state calculation time step (current ode settings run faster using a smaller value)
+quad_params["Tp"] = 1/50 # period it publishes the current state
 quad_params["orient"] = "ENU"
-
-class InitQuadSim(Node):
-
-    def __init__(self):
-        super().__init__('init_quadsim')
-        # ros2 run quad_sim_python quadsim --ros-args -p target_frame:='flying_sensor'
-        self.declare_parameter('target_frame', 'flying_sensor')
-        self.target_frame = self.get_parameter(
-            'target_frame').get_parameter_value().string_value
-
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
-
-        # Call on_timer function every second
-        self.timer = self.create_timer(0.1, self.on_timer)
-
-    def on_timer(self):
-        # Store frame names in variables that will be used to
-        # compute transformations
-        from_frame_rel = self.target_frame
-        to_frame_rel = 'map'
-
-        # Look up for the transformation between target_frame and turtle2 frames
-        # and send velocity commands for turtle2 to reach target_frame
-        try:
-            now = rclpy.time.Time()
-            trans = self.tf_buffer.lookup_transform(
-                to_frame_rel,
-                from_frame_rel,
-                now)
-        except TransformException as ex:
-            self.get_logger().info(
-                f'Could not transform {to_frame_rel} to {from_frame_rel}: {ex}')
-            return
-
-        self.output = [trans.transform.translation.x, trans.transform.translation.y, trans.transform.translation.z]
-
-        raise KeyboardInterrupt
+quad_params["target_frame"] = 'flying_sensor'
+quad_params["map_frame"] = 'map'
 
 class QuadSim(Node):
-    def __init__(self, target_frame, init_pos=[0,0,0]):
-        super().__init__('quadsim')
+    def __init__(self):
+        super().__init__('quadsim', 
+                         allow_undeclared_parameters=True, # necessary for using set_parameters
+                         automatically_declare_parameters_from_overrides=True) # allows command line parameters
+
+        # Read ROS2 parameters the user may have set 
+        # E.g. (https://docs.ros.org/en/foxy/How-To-Guides/Node-arguments.html):
+        # --ros-args -p init_pose:=[0,0,0,0,0,0])
+        # --ros-args --params-file params.yaml
+        read_params = ROS2Params2Dict(self, 'quadsim', list(quad_params.keys()) + ["init_pose"])
+        for k,v in read_params.items():
+            # Update local parameters
+            quad_params[k] = v
+        
+        # Update ROS2 parameters
+        Dict2ROS2Params(self, quad_params) # the controller needs to read some parameters from here
+
+
         self.w_cmd_lock = Lock()
         self.wind_lock = Lock()
         self.sim_pub_lock = Lock()
 
         # pos[3], quat[4], rpy[3], vel[3], vel_dot[3], omega[3], omega_dot[3]
-        self.curr_state = np.zeros(22)
+        self.curr_state = np.zeros(22, dtype='float32')
 
         self.wind = [0,0,0]
         self.prev_wind = [0,0,0]
-        
-        quad_params["init_pos"] = init_pos
-        quad_params["target_frame"] = target_frame
-        Dict2ROS2Params(self, quad_params)
+
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        if "init_pose" not in quad_params:
+            # Look up for the transformation between target_frame and map_frame frames
+            try:
+                now = rclpy.time.Time()
+                trans = self.tf_buffer.lookup_transform(
+                    quad_params["map_frame"],
+                    quad_params["target_frame"],
+                    now)
+
+                init_pos = [trans.transform.translation.x, 
+                            trans.transform.translation.y, 
+                            trans.transform.translation.z]
+
+                init_quat = [trans.rotation.translation.x,
+                            trans.rotation.translation.y,
+                            trans.rotation.translation.z,
+                            trans.rotation.translation.w]
+                init_rpy = utils.quatToYPR_ZYX(init_quat)[::-1]
+
+                quad_params["init_pose"] = init_pos + init_rpy
+
+                # Update ROS2 parameters
+                Dict2ROS2Params(self, {"init_pose": init_pos+init_rpy}) # the controller needs to read some parameters from here
+
+            except TransformException as ex:
+                self.get_logger().error(f'Could not transform {quad_params["map_frame"]} to {quad_params["target_frame"]}: {ex}')
+                self.get_logger().error('init_pose not available... using [0,0,0,0,0,0]')
+                # Update ROS2 parameters
+                Dict2ROS2Params(self, {"init_pose": [0,0,0,0,0,0]})
+
 
         self.start_sim()
-        self.w_cmd = [self.quad.params['w_hover']]*4
         self.get_logger().info(f'Simulator started!')
 
-        self.quadpos_pub = self.create_publisher(Pose, f'/carla/{target_frame}/control/set_transform',1)
-        self.quadstate_pub = self.create_publisher(QuadState, f'/quadsim/{target_frame}/state',1)
+        self.quadpos_pub = self.create_publisher(Pose, f'/carla/{quad_params["target_frame"]}/control/set_transform',1)
+        self.quadstate_pub = self.create_publisher(QuadState, f'/quadsim/{quad_params["target_frame"]}/state',1)
 
         self.receive_w_cmd = self.create_subscription(
             QuadMotors,
-            f'/quadsim/{target_frame}/w_cmd',
+            f'/quadsim/{quad_params["target_frame"]}/w_cmd',
             self.receive_w_cmd_cb,
             1)
 
         self.receive_wind = self.create_subscription(
             QuadWind,
-            f'/quadsim/{target_frame}/wind',
+            f'/quadsim/{quad_params["target_frame"]}/wind',
             self.receive_wind_cb,
             1)
 
     def start_sim(self):
         params = ROS2Params2Dict(self, 'quadsim', quad_params.keys())
-        init_pose = np.array([*params['init_pos'],0,0,0]) # x0, y0, z0, phi0, theta0, psi0
+        init_pose = np.array(params['init_pose']) # x0, y0, z0, phi0, theta0, psi0
         init_twist = np.array([0,0,0,0,0,0]) # xdot, ydot, zdot, p, q, r
         init_states = np.hstack((init_pose,init_twist))
         self.t = 0
         self.Ts = params['Ts']
-        orient = params['orient']
-        self.quad = Quadcopter(self.t, init_states, params=params.copy(), orient=orient)
+        self.quad = Quadcopter(self.t, init_states, params=params.copy(), orient=params['orient'])
+        self.w_cmd = [self.quad.params['w_hover']]*4
         new_params = {key: self.quad.params[key] for key in self.quad.params if key not in params}
-        Dict2ROS2Params(self, new_params)
+        Dict2ROS2Params(self, new_params) # some parameters are created by the quad object
 
         self.sim_loop_timer = self.create_timer(self.Ts, self.on_sim_loop)
         self.sim_publish_timer = self.create_timer(params['Tp'], self.on_sim_publish)
@@ -176,48 +186,33 @@ class QuadSim(Node):
             self.curr_state[13:16] = self.quad.vel_dot[:]
             self.curr_state[16:19] = self.quad.omega[:]
             self.curr_state[19:22] = self.quad.omega_dot[:]
+            self.t += self.Ts
             self.sim_pub_lock.release()
-        self.t += self.Ts
         self.get_logger().info(f'Quad pos/vel: {self.quad.pos} / {self.quad.vel}')
 
     def on_sim_publish(self):
         msg1 = Pose()
         msg2 = QuadState()
         with self.sim_pub_lock:
-            msg1.position.x = self.curr_state[0]
-            msg1.position.y = self.curr_state[1]
-            msg1.position.z = self.curr_state[2]
-            msg1.orientation.x = self.curr_state[3]
-            msg1.orientation.y = self.curr_state[4]
-            msg1.orientation.z = self.curr_state[5]
-            msg1.orientation.w = self.curr_state[6]
+            msg1.position.x = float(self.curr_state[0])
+            msg1.position.y = float(self.curr_state[1])
+            msg1.position.z = float(self.curr_state[2])
+            msg1.orientation.x = float(self.curr_state[3])
+            msg1.orientation.y = float(self.curr_state[4])
+            msg1.orientation.z = float(self.curr_state[5])
+            msg1.orientation.w = float(self.curr_state[6])
 
             msg2.t = self.t
-            msg2.pos.x = self.curr_state[0:3][0]
-            msg2.pos.y = self.curr_state[0:3][1]
-            msg2.pos.z = self.curr_state[0:3][2]
-            msg2.quat.x = self.curr_state[3:7][0]
-            msg2.quat.y = self.curr_state[3:7][1]
-            msg2.quat.z = self.curr_state[3:7][2]
-            msg2.quat.w = self.curr_state[3:7][3]
-            msg2.rpy.x = self.curr_state[7:10][0]
-            msg2.rpy.y = self.curr_state[7:10][1]
-            msg2.rpy.z = self.curr_state[7:10][2]
-            msg2.vel.x = self.curr_state[10:13][0]
-            msg2.vel.y = self.curr_state[10:13][1]
-            msg2.vel.z = self.curr_state[10:13][2]
-            msg2.vel_dot.x = self.curr_state[13:16][0]
-            msg2.vel_dot.y = self.curr_state[13:16][1]
-            msg2.vel_dot.z = self.curr_state[13:16][2]
-            msg2.omega.x = self.curr_state[16:19][0]
-            msg2.omega.y = self.curr_state[16:19][1]
-            msg2.omega.z = self.curr_state[16:19][2]
-            msg2.omega_dot.x = self.curr_state[19:22][0]
-            msg2.omega_dot.y = self.curr_state[19:22][1]
-            msg2.omega_dot.z = self.curr_state[19:22][2]
+            msg2.pos = self.curr_state[0:3][:]
+            msg2.quat = self.curr_state[3:7][:]
+            msg2.rpy = self.curr_state[7:10][:]
+            msg2.vel = self.curr_state[10:13][:]
+            msg2.vel_dot = self.curr_state[13:16][:]
+            msg2.omega = self.curr_state[16:19][:]
+            msg2.omega_dot = self.curr_state[19:22][:]
         self.quadpos_pub.publish(msg1)
         self.quadstate_pub.publish(msg2)
-        self.get_logger().info(f'Quad State: {msg2}')
+        self.get_logger().debug(f'Quad State: {self.curr_state}')
 
 def main():
     print("Starting QuadSim...")
@@ -234,7 +229,7 @@ def main():
     # quad_node = QuadSim(temp_node.target_frame, init_pos=temp_node.output)
     # temp_node.destroy_node()
 
-    quad_node = QuadSim("flying_sensor")
+    quad_node = QuadSim()
     try:
         rclpy.spin(quad_node)
     except KeyboardInterrupt:
