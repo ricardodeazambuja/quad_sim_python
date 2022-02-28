@@ -122,7 +122,6 @@ def ROS2Params2Dict(node, node_name, parameter_names):
     param_dict = {}
     shapes2retrieve = []
     for name, param in zip(parameter_names, response):
-        print(param.type)
         if param.type: # NOT_SET is 0
             param_dict[name] = getattr(param, int2type[param.type].lower()+"_value")
             if "ARRAY" in int2type[param.type]:
