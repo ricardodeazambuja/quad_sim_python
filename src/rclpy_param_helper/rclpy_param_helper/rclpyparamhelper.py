@@ -9,8 +9,8 @@ It expects the node to set 'allow_undeclared_parameters=True'.
 """
 import rclpy
 from rclpy.parameter import Parameter
-from rcl_interfaces.msg import ParameterDescriptor
-from rcl_interfaces.srv import GetParameters
+# from rcl_interfaces.msg import ParameterDescriptor
+# from rcl_interfaces.srv import GetParameters
 from ros2param.api import call_get_parameters
 import numpy as np
 
@@ -122,9 +122,14 @@ def ROS2Params2Dict(node, node_name, parameter_names):
     param_dict = {}
     shapes2retrieve = []
     for name, param in zip(parameter_names, response):
-        param_dict[name] = getattr(param, int2type[param.type].lower()+"_value")
-        if "ARRAY" in int2type[param.type]:
-            shapes2retrieve.append(name+"___shape")
+        print(param.type)
+        if param.type: # NOT_SET is 0
+            param_dict[name] = getattr(param, int2type[param.type].lower()+"_value")
+            if "ARRAY" in int2type[param.type]:
+                shapes2retrieve.append(name+"___shape")
+        else:
+            node.get_logger().warn(f"Parameter {name} is not available!")
+
     if shapes2retrieve:
         response = get_params(shapes2retrieve)
         for name, param in zip(shapes2retrieve, response):
