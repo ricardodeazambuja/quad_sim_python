@@ -172,7 +172,7 @@ class Controller:
         self.drone_z = dcm[:,2]
 
 
-        if (yawType == None):
+        if not yawType:
             # Leave Yaw "loose"
             self.att_P_gain[2] = 0
         self.setYawWeight()
