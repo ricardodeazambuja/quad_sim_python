@@ -118,7 +118,11 @@ def ROS2Params2Dict(node, node_name, parameter_names):
             return [param.to_parameter_msg().value for param in node.get_parameters(parameter_names)]
 
     # response is expected to follow the parameter_names order...
-    response = get_params(parameter_names)
+    try:
+        response = get_params(parameter_names)
+    except RuntimeError:
+        node.get_logger().error(f"Parameters from '{node_name}' are not available!")
+        raise
 
     param_dict = {}
     shapes2retrieve = []
