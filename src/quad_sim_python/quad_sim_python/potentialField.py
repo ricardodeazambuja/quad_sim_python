@@ -9,7 +9,7 @@ Please feel free to use and modify this, but keep the above information. Thanks!
 import numpy as np
 from numpy.linalg import norm
 
-import utils
+import quad_sim_python.utils as utils
 
 
 
