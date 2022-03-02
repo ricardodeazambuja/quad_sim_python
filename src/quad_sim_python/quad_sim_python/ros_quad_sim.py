@@ -1,6 +1,12 @@
+import sys, os
+curr_path = os.getcwd()
+if os.path.basename(curr_path) not in sys.path:
+    sys.path.append(os.path.dirname(os.getcwd()))
 
+from time import sleep
 from threading import Lock
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from sensor_msgs.msg import Imu
 from geometry_msgs.msg import Pose
@@ -54,7 +60,8 @@ quad_params["motorc0"]    = 74.7
 quad_params["usePrecession"] = False
 
 quad_params["Ts"] = 1/200 # state calculation time step (current ode settings run faster using a smaller value)
-quad_params["Tp"] = 1/50 # period it publishes the current state
+quad_params["Tp"] = 1/25 # period it publishes the current pose
+quad_params["Tfs"] = 1/50 # period it publishes the full state
 quad_params["orient"] = "ENU"
 quad_params["target_frame"] = 'flying_sensor'
 quad_params["map_frame"] = 'map'
@@ -91,38 +98,66 @@ class QuadSim(Node):
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
+        
+        # Timer for the tf
+        # I couldn't find a way to receive it without using a timer 
+        # to allow me to call lookup_transform after rclpy.spin(quad_node)
+        self.tf_timer = self.create_timer(1.0, self.on_tf_timer)
 
+    def on_tf_timer(self):
         if "init_pose" not in quad_params:
             # Look up for the transformation between target_frame and map_frame frames
             try:
+                now = rclpy.time.Time()
                 trans = self.tf_buffer.lookup_transform(
                     quad_params["map_frame"],
                     quad_params["target_frame"],
-                    rclpy.time.Time())
+                    now)
 
+                self.get_logger().info(f'TF received {trans}')
                 init_pos = [trans.transform.translation.x, 
                             trans.transform.translation.y, 
                             trans.transform.translation.z]
 
-                init_quat = [trans.rotation.translation.x,
-                            trans.rotation.translation.y,
-                            trans.rotation.translation.z,
-                            trans.rotation.translation.w]
-                init_rpy = utils.quatToYPR_ZYX(init_quat)[::-1]
+                init_quat = [trans.transform.rotation.x,
+                             trans.transform.rotation.y,
+                             trans.transform.rotation.z,
+                             trans.transform.rotation.w]
 
-                quad_params["init_pose"] = init_pos + init_rpy
-
+                init_rpy = Rotation.from_quat(init_quat).as_euler()
+                
+                quad_params["init_pose"] = np.concatenate((init_pos,init_rpy))
                 # Update ROS2 parameters
-                Dict2ROS2Params(self, {"init_pose": init_pos+init_rpy}) # the controller needs to read some parameters from here
+                Dict2ROS2Params(self, {"init_pose": quad_params["init_pose"]}) # the controller needs to read some parameters from here
 
             except TransformException as ex:
                 self.get_logger().error(f'Could not transform {quad_params["map_frame"]} to {quad_params["target_frame"]}: {ex}')
-                self.get_logger().error('init_pose not available... using [0,0,0,0,0,0]')
+                quad_params["init_pose"] = [0,0,0,0,0,0]
+                self.get_logger().error(f'init_pose not available... using {quad_params["init_pose"]}')
                 # Update ROS2 parameters
-                Dict2ROS2Params(self, {"init_pose": [0,0,0,0,0,0]})
+                Dict2ROS2Params(self, {"init_pose": quad_params["init_pose"]})
+        else:
+            self.start_sim()
 
 
-        self.start_sim()
+    def start_sim(self):   
+        self.destroy_timer(self.tf_timer)
+
+        params = ROS2Params2Dict(self, 'quadsim', quad_params.keys())
+        init_pose = np.array(params['init_pose']) # x0, y0, z0, phi0, theta0, psi0
+        init_twist = np.array([0,0,0,0,0,0]) # xdot, ydot, zdot, p, q, r
+        init_states = np.hstack((init_pose,init_twist))
+        self.t = 0
+        self.Ts = params['Ts']
+        self.quad = Quadcopter(self.t, init_states, params=params.copy(), orient=params['orient'])
+        self.w_cmd = [self.quad.params['w_hover']]*4
+        new_params = {key: self.quad.params[key] for key in self.quad.params if key not in params}
+        Dict2ROS2Params(self, new_params) # some parameters are created by the quad object
+
+        self.sim_loop_timer = self.create_timer(self.Ts, self.on_sim_loop)
+        self.sim_publish_full_state_timer = self.create_timer(params['Tfs'], self.on_sim_publish_fs)
+        self.sim_publish_pose_timer = self.create_timer(params['Tp'], self.on_sim_publish_pose)
+
         self.get_logger().info(f'Simulator started!')
 
         self.quadpos_pub = self.create_publisher(Pose, f'/carla/{quad_params["target_frame"]}/control/set_transform',1)
@@ -140,21 +175,6 @@ class QuadSim(Node):
             f'/quadsim/{quad_params["target_frame"]}/wind',
             self.receive_wind_cb,
             1)
-
-    def start_sim(self):
-        params = ROS2Params2Dict(self, 'quadsim', quad_params.keys())
-        init_pose = np.array(params['init_pose']) # x0, y0, z0, phi0, theta0, psi0
-        init_twist = np.array([0,0,0,0,0,0]) # xdot, ydot, zdot, p, q, r
-        init_states = np.hstack((init_pose,init_twist))
-        self.t = 0
-        self.Ts = params['Ts']
-        self.quad = Quadcopter(self.t, init_states, params=params.copy(), orient=params['orient'])
-        self.w_cmd = [self.quad.params['w_hover']]*4
-        new_params = {key: self.quad.params[key] for key in self.quad.params if key not in params}
-        Dict2ROS2Params(self, new_params) # some parameters are created by the quad object
-
-        self.sim_loop_timer = self.create_timer(self.Ts, self.on_sim_loop)
-        self.sim_publish_timer = self.create_timer(params['Tp'], self.on_sim_publish)
 
     def receive_w_cmd_cb(self, motor_msg):
         with self.w_cmd_lock:
@@ -189,21 +209,25 @@ class QuadSim(Node):
             self.curr_state[19:22] = self.quad.omega_dot[:]
             self.t += self.Ts
             self.sim_pub_lock.release()
-        self.get_logger().info(f'Quad pos/vel: {self.quad.pos} / {self.quad.vel}')
+        self.get_logger().info(f'Quad State: {self.curr_state}')
 
-    def on_sim_publish(self):
+    def on_sim_publish_pose(self):
         pose_msg = Pose()
-        state_msg = QuadState()
-        imu_msg = Imu()
         with self.sim_pub_lock:
             pose_msg.position.x = float(self.curr_state[0])
             pose_msg.position.y = float(self.curr_state[1])
             pose_msg.position.z = float(self.curr_state[2])
-            pose_msg.orientation.x = float(self.curr_state[3])
-            pose_msg.orientation.y = float(self.curr_state[4])
-            pose_msg.orientation.z = float(self.curr_state[5])
-            pose_msg.orientation.w = float(self.curr_state[6])
+            pose_msg.orientation.x = float(self.curr_state[4])
+            pose_msg.orientation.y = float(self.curr_state[5])
+            pose_msg.orientation.z = float(self.curr_state[6])
+            pose_msg.orientation.w = float(self.curr_state[3])
 
+        self.quadpos_pub.publish(pose_msg)
+
+    def on_sim_publish_fs(self):
+        state_msg = QuadState()
+        imu_msg = Imu()
+        with self.sim_pub_lock:
             now = rclpy.time.Time().to_msg()
             state_msg.header.stamp = now
             state_msg.t = self.t
@@ -215,16 +239,18 @@ class QuadSim(Node):
             state_msg.omega = self.curr_state[16:19][:]
             state_msg.omega_dot = self.curr_state[19:22][:]
 
-            imu_msg.header.stamp = now
-            imu_msg.orientation = pose_msg.orientation
-            imu_msg.angular_velocity.x = state_msg.omega[0]
-            imu_msg.angular_velocity.y = state_msg.omega[1]
-            imu_msg.angular_velocity.z = state_msg.omega[2]
-            imu_msg.linear_acceleration.x = state_msg.vel[0]
-            imu_msg.linear_acceleration.y = state_msg.vel[1]
-            imu_msg.linear_acceleration.z = state_msg.vel[2]
+        imu_msg.header.stamp = now
+        imu_msg.orientation.x = state_msg.quat[0]
+        imu_msg.orientation.y = state_msg.quat[1]
+        imu_msg.orientation.z = state_msg.quat[2]
+        imu_msg.orientation.w = state_msg.quat[3]
+        imu_msg.angular_velocity.x = state_msg.omega[0]
+        imu_msg.angular_velocity.y = state_msg.omega[1]
+        imu_msg.angular_velocity.z = state_msg.omega[2]
+        imu_msg.linear_acceleration.x = state_msg.vel[0]
+        imu_msg.linear_acceleration.y = state_msg.vel[1]
+        imu_msg.linear_acceleration.z = state_msg.vel[2]
 
-        self.quadpos_pub.publish(pose_msg)
         self.quadstate_pub.publish(state_msg)
         self.imu_pub.publish(imu_msg)
         self.get_logger().debug(f'Quad State: {self.curr_state}')
