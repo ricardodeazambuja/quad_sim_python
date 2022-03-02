@@ -13,8 +13,6 @@ from numpy.linalg import norm
 from potentialField import PotField
 from ctrl import Controller
 from quad import Quadcopter
-from utils.windModel import Wind
-import utils
 import disp
 
 ORIENT = "ENU"
@@ -88,13 +86,8 @@ def main():
                  quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
                  potfld.F_rep, potfld.pfVel, potfld.pfSatFor, potfld.pfFor)
 
-    # Mixer (generates motor speeds)
-    # --------------------------- 
-    thurst_drone_z = norm(ctrl.thrust_rep_sp) #max(0,np.dot(ctrl.thrust_rep_sp,ctrl.drone_z))
-    moments_drone = 9.81*np.dot(quad.params["IB"], ctrl.rateCtrl)
-    # moments = 9.81*quad.params["IB"][DIAG_IDS]*ctrl.rateCtrl
-    w_cmd = utils.mixerFM(thurst_drone_z, moments_drone, 
-                          quad.params["mixerFMinv"], quad.params["minWmotor"], quad.params["maxWmotor"])
+    w_cmd = ctrl.getMotorSpeeds()
+    # w_cmd = [quad.params["w_hover"]]*4
     
     # Initialize Result Matrixes
     # ---------------------------
@@ -132,11 +125,13 @@ def main():
     rs = np.random.RandomState() # just add a seed for reproducibility ...
     wall = rs.normal(0, 1, size=(2000,3))
     s = (wall**2).sum(axis=1)
-    print(s)
     wall = wall[(s>0.9)*(s<1.1),:]
+    
     # wall = rs.rand(2000,3)*5-2.5
-    wall[:,1] += 6
-    # wall = np.empty((0,3)) # no wall
+    # wall[:,1] += 6
+
+    wall = np.empty((0,3)) # no wall
+
     # l = 10
     # wall[:,0] = wall[:,0]*l-l/2
     # wall[:,1] = 0 #wall[:,0]*2-1
@@ -177,16 +172,12 @@ def main():
                      quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
                      potfld.F_rep, potfld.pfVel, potfld.pfSatFor, potfld.pfFor)
 
-        # Mixer (generates motor speeds)
-        # --------------------------- 
-        thurst_drone_z = norm(ctrl.thrust_rep_sp) #max(0,np.dot(ctrl.thrust_rep_sp,ctrl.drone_z))
-        moments_drone = 9.81*np.dot(quad.params["IB"], ctrl.rateCtrl)
-        # moments = 9.81*quad.params["IB"][DIAG_IDS]*ctrl.rateCtrl
-        w_cmd = utils.mixerFM(thurst_drone_z, moments_drone, 
-                              quad.params["mixerFMinv"], quad.params["minWmotor"], quad.params["maxWmotor"])
+        w_cmd = ctrl.getMotorSpeeds()
+        # w_cmd = [quad.params["w_hover"]]*4
 
-        if i<500:
-            print(f"{t:.3f}","[{0:.3f},{1:.3f},{2:.3f}]".format(*ctrl.thrust_rep_sp), f"{thurst_drone_z,norm(ctrl.thrust_rep_sp)}")
+        # if i<500:
+        #     print(f"{t:.3f}","[{0:.3f},{1:.3f},{2:.3f}]".format(*ctrl.thrust_rep_sp), f"{thurst_drone_z,norm(ctrl.thrust_rep_sp)}")
+        print((quad.euler*180/np.pi).astype(int), quad.quat)
 
 
         t_all.append(t)

@@ -9,11 +9,10 @@ Please feel free to use and modify this, but keep the above information. Thanks!
 import numpy as np
 from numpy import pi
 from numpy.linalg import norm
+from scipy.spatial.transform import Rotation
 import matplotlib.pyplot as plt
 from matplotlib import animation
 from mpl_toolkits.mplot3d import Axes3D # https://stackoverflow.com/a/56222305/7658422
-
-import quad_sim_python.utils as utils
 
 numFrames = 8
 
@@ -179,7 +178,7 @@ def sameAxisAnimation(t_all, waypoints, pos_all, quat_all, sDes_tr_all, Ts, para
             pts[:,2] = -pts[:,2]
 
     
-        R = utils.quat2Dcm(quat)    
+        R = Rotation.from_quat(quat[[1,2,3,0]])
         motorPoints = np.array([[dxm, -dym, dzm], [0, 0, 0], [dxm, dym, dzm], [-dxm, dym, dzm], [0, 0, 0], [-dxm, -dym, dzm]])
         motorPoints = np.dot(R, np.transpose(motorPoints))
         motorPoints[0,:] += x 

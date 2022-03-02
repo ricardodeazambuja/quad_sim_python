@@ -15,8 +15,6 @@ from trajectory import Trajectory
 from potentialField import PotField
 from ctrl import Controller
 from quad import Quadcopter
-from utils.windModel import Wind
-import utils
 import disp
 
 ORIENT = "ENU"
@@ -128,13 +126,7 @@ def main():
                  quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
                  potfld.F_rep, potfld.pfVel, potfld.pfSatFor, potfld.pfFor)
 
-    # Mixer (generates motor speeds)
-    # --------------------------- 
-    thurst_drone_z = norm(ctrl.thrust_rep_sp) #max(0,np.dot(ctrl.thrust_rep_sp,ctrl.drone_z))
-    moments_drone = 9.81*np.dot(quad.params["IB"], ctrl.rateCtrl)
-    # moments = 9.81*quad.params["IB"][DIAG_IDS]*ctrl.rateCtrl
-    w_cmd = utils.mixerFM(thurst_drone_z, moments_drone, 
-                          quad.params["mixerFMinv"], quad.params["minWmotor"], quad.params["maxWmotor"])
+    w_cmd = ctrl.getMotorSpeeds()
 
     # Initialize Result Matrixes
     # ---------------------------
@@ -210,13 +202,8 @@ def main():
                      desPos, desVel, desAcc, desThr, desEul[2], desYawRate,
                      quad.pos, quad.vel, quad.vel_dot, quad.quat, quad.omega, quad.omega_dot, quad.psi, 
                      potfld.F_rep, potfld.pfVel, potfld.pfSatFor, potfld.pfFor)
-        # Mixer (generates motor speeds)
-        # --------------------------- 
-        thurst_drone_z = norm(ctrl.thrust_rep_sp) #max(0,np.dot(ctrl.thrust_rep_sp,ctrl.drone_z))
-        moments_drone = 9.81*np.dot(quad.params["IB"], ctrl.rateCtrl)
-        # moments = 9.81*quad.params["IB"][DIAG_IDS]*ctrl.rateCtrl
-        w_cmd = utils.mixerFM(thurst_drone_z, moments_drone, 
-                              quad.params["mixerFMinv"], quad.params["minWmotor"], quad.params["maxWmotor"])
+
+        w_cmd = ctrl.getMotorSpeeds()
         
         # print("{:.3f}".format(t))
         t_all.append(t)

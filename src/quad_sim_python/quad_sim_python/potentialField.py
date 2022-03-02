@@ -5,11 +5,11 @@ email: john.bobzwik@gmail.com
 license: MIT
 Please feel free to use and modify this, but keep the above information. Thanks!
 """
+import sys, os
+sys.path.append(os.path.dirname(os.getcwd()))
 
 import numpy as np
 from numpy.linalg import norm
-
-import quad_sim_python.utils as utils
 
 
 

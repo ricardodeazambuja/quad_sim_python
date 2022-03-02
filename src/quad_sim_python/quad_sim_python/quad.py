@@ -13,10 +13,8 @@ if os.path.basename(curr_path) not in sys.path:
 import numpy as np
 from numpy import sin, cos, pi, sign
 from scipy.integrate import ode
-# from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation
 from numpy.linalg import inv
-
-import quad_sim_python.utils as utils
 
 deg2rad = pi/180.0
 
@@ -129,7 +127,8 @@ class Quadcopter:
         
         x0, y0, z0, phi0, theta0, psi0, xdot, ydot, zdot, p, q, r = init_states
 
-        quat = utils.YPRToQuat(psi0, theta0, phi0)
+        # Here it's used w x y z for quaternions
+        quat = Rotation.from_euler('xyz', [phi0, theta0, psi0]).as_quat()[[3,0,1,2]]
         
         # z0 = -self.z_mul*z0
         # zdot = -self.z_mul*zdot
@@ -184,11 +183,10 @@ class Quadcopter:
 
     def extended_state(self):
         # Euler angles of current state
-        YPR = utils.quatToYPR_ZYX(self.quat)
-        self.euler = YPR[::-1] # flip YPR so that euler state = phi, theta, psi
-        self.heading = self.psi = YPR[0] # around Z => Yaw
-        self.theta = YPR[1] # around X => Roll
-        self.phi   = YPR[2] # around Y => Pitch
+        self.euler = Rotation.from_quat(self.quat[[1,2,3,0]]).as_euler('xyz')
+        self.theta = self.euler[1] # around X => Roll
+        self.phi   = self.euler[2] # around Y => Pitch
+        self.heading = self.psi = self.euler[0] # around Z => Yaw
         # https://en.wikipedia.org/wiki/Euler_angles#Tait%E2%80%93Bryan_angles
 
     

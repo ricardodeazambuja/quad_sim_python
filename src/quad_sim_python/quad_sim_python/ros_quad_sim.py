@@ -21,7 +21,6 @@ from tf2_ros.transform_listener import TransformListener
 
 
 from quad_sim_python.quad import Quadcopter
-import quad_sim_python.utils as utils
 from rclpy_param_helper import Dict2ROS2Params, ROS2Params2Dict
 
 quad_params = {}
@@ -124,7 +123,7 @@ class QuadSim(Node):
                              trans.transform.rotation.z,
                              trans.transform.rotation.w]
 
-                init_rpy = Rotation.from_quat(init_quat).as_euler()
+                init_rpy = Rotation.from_quat(init_quat).as_euler('xyz')
                 
                 quad_params["init_pose"] = np.concatenate((init_pos,init_rpy))
                 # Update ROS2 parameters
@@ -201,7 +200,7 @@ class QuadSim(Node):
 
         if self.sim_pub_lock.acquire(blocking=False):
             self.curr_state[0:3] = self.quad.pos[:]
-            self.curr_state[3:7] = self.quad.quat[[1,2,3,0]]
+            self.curr_state[3:7] = self.quad.quat[[1,2,3,0]] # the sim uses w x y z
             self.curr_state[7:10] = self.quad.euler[:]
             self.curr_state[10:13] = self.quad.vel[:]
             self.curr_state[13:16] = self.quad.vel_dot[:]

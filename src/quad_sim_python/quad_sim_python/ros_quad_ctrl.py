@@ -22,11 +22,7 @@ from tf2_ros.transform_listener import TransformListener
 from rclpy_param_helper import Dict2ROS2Params, ROS2Params2Dict
 
 from quad_sim_python.ctrl import Controller
-import quad_sim_python.utils as utils
 
-
-# First I will create something using nodes instead of action server. 
-# The controller will keep using the last setpoint received.
 
 ctrl_params = {
             # Position P gains
@@ -161,20 +157,15 @@ class QuadCtrl(Node):
                 self.prev_sp = self.curr_sp
                 self.ctrl_sp_lock.release()
 
-            # arrives as q = x,y,z,w [0,1,2,3]
-            # needs to change to q = w,x,y,z [3,0,1,2]
+            # Quaternion arrives as q = x,y,z,w [0,1,2,3]
+            # So it needs to change to q = w,x,y,z [3,0,1,2]
             self.ctrl.control((self.t-self.prev_t), self.prev_sp.ctrltype, self.prev_sp.yawtype, 
                                self.prev_sp.pos, self.prev_sp.vel, self.prev_sp.acc, self.prev_sp.thr, 
                                self.prev_sp.yaw, self.prev_sp.yawrate,
                                state_msg.pos, state_msg.vel, state_msg.vel_dot, 
                                state_msg.quat[[3,0,1,2]], state_msg.omega, state_msg.omega_dot, state_msg.rpy[2])
 
-            # Mixer (generates motor speeds)
-            # --------------------------- 
-            thurst_drone_z = norm(self.ctrl.thrust_rep_sp) #max(0,np.dot(ctrl.thrust_rep_sp,ctrl.drone_z))
-            moments_drone = 9.81*np.dot(self.quad_params["IB"], self.ctrl.rateCtrl)
-            w_cmd = utils.mixerFM(thurst_drone_z, moments_drone, 
-                                  self.quad_params["mixerFMinv"], self.quad_params["minWmotor"], self.quad_params["maxWmotor"])
+            w_cmd = self.ctrl.getMotorSpeeds()
             motor_msg = QuadMotors()
             motor_msg.header.stamp = rclpy.time.Time().to_msg()
             motor_msg.m1 = int(w_cmd[0])

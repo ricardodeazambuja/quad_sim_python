@@ -22,7 +22,6 @@ if os.path.basename(curr_path) not in sys.path:
     sys.path.append(os.path.dirname(os.getcwd()))
 
 from scipy.spatial.transform import Rotation
-import quad_sim_python.utils as utils
 
 rad2deg = 180.0/pi
 deg2rad = pi/180.0
@@ -172,8 +171,8 @@ class Controller:
             self.prev_heading_sp = self.psi
 
         # Rotation Matrix of current state (Direct Cosine Matrix)
-        dcm = utils.quat2Dcm(self.quat)
-        # dcm = Rotation.from_quat(self.quat[[3,0,1,2]]).as_matrix()
+        self.quat_rot = Rotation.from_quat(self.quat[[1,2,3,0]])
+        dcm = self.quat_rot.as_matrix()
 
         # Current thrust (drone) orientation
         self.drone_z = dcm[:,2]
@@ -347,14 +346,14 @@ class Controller:
         self.thrust_rep_sp = self.thrust_sp + pfFor*F_rep
 
         # Desired body_z axis direction
-        body_z = self.z_mul*utils.vectNormalize(self.thrust_rep_sp)
+        body_z = self.z_mul*(self.thrust_rep_sp/norm(self.thrust_rep_sp))
         
         # Vector of desired Yaw direction in XY plane, rotated by pi/2 (fake body_y axis)
         y_C = np.array([-sin(self.yaw_sp), cos(self.yaw_sp), 0.0])
         
         # Desired body_x axis direction
         body_x = np.cross(y_C, body_z)
-        body_x = utils.vectNormalize(body_x)
+        body_x = (body_x/norm(body_x))
         
         # Desired body_y axis direction
         body_y = np.cross(body_z, body_x)
@@ -363,41 +362,45 @@ class Controller:
         R_sp = np.array([body_x, body_y, body_z]).T
 
         # Full desired quaternion (full because it considers the desired Yaw angle)
-        self.qd_full = utils.RotToQuat(R_sp)
+        self.qd_full = Rotation.from_matrix(R_sp).as_quat()[[3,0,1,2]]
+        self.qd_full_rot = Rotation.from_matrix(R_sp)
         
         
     def attitude_control(self):
 
         # Desired thrust orientation
-        drone_z_desired = self.z_mul*utils.vectNormalize(self.thrust_rep_sp)
+        drone_z_desired = self.z_mul*(self.thrust_rep_sp/norm(self.thrust_rep_sp))
 
         # Quaternion error between the 2 vectors
         qe_red = np.zeros(4)
         qe_red[0] = np.dot(self.drone_z, drone_z_desired) + sqrt(norm(self.drone_z)**2 * norm(drone_z_desired)**2)
         qe_red[1:4] = np.cross(self.drone_z, drone_z_desired)
-        qe_red = utils.vectNormalize(qe_red)
+        qe_red = (qe_red/norm(qe_red))
+        qe_red_rot = Rotation.from_quat(qe_red[[1,2,3,0]])
         
         # Reduced desired quaternion (reduced because it doesn't consider the desired Yaw angle)
-        self.qd_red = utils.quatMultiply(qe_red, self.quat)
+        qd_red_rot = qe_red_rot * self.quat_rot
 
         # Mixed desired quaternion (between reduced and full) and resulting desired quaternion qd
-        q_mix = utils.quatMultiply(utils.inverse(self.qd_red), self.qd_full)
+        q_mix = (qd_red_rot.inv() * self.qd_full_rot).as_quat()[[3,0,1,2]]
         q_mix = q_mix*np.sign(q_mix[0])
         q_mix[0] = np.clip(q_mix[0], -1.0, 1.0)
         q_mix[3] = np.clip(q_mix[3], -1.0, 1.0)
-        self.qd = utils.quatMultiply(self.qd_red, np.array([cos(self.yaw_w*np.arccos(q_mix[0])), 0, 0, sin(self.yaw_w*np.arcsin(q_mix[3]))]))
 
+        temp_rot = Rotation.from_quat(np.array([0, 0, sin(self.yaw_w*np.arcsin(q_mix[3])), cos(self.yaw_w*np.arccos(q_mix[0]))])) 
+        
         # Resulting error quaternion
-        self.qe = utils.quatMultiply(utils.inverse(self.quat), self.qd)
+        quat_inv_rot = self.quat_rot.inv()
+        qe = (quat_inv_rot * (qd_red_rot * temp_rot)).as_quat()[[3,0,1,2]]
 
         # Create rate setpoint from quaternion error
-        self.rate_sp = (2.0*np.sign(self.qe[0])*self.qe[1:4])*self.att_P_gain
+        self.rate_sp = (2.0*np.sign(qe[0])*qe[1:4])*self.att_P_gain
         
         # Limit yawFF
         self.yawFF = np.clip(self.yawFF, -self.rateMax[2], self.rateMax[2])
 
         # Add Yaw rate feed-forward
-        self.rate_sp += utils.quat2Dcm(utils.inverse(self.quat))[:,2]*self.yawFF
+        self.rate_sp += quat_inv_rot.as_matrix()[:,2]*self.yawFF
 
         # Limit rate setpoint
         self.rate_sp = np.clip(self.rate_sp, -self.rateMax, self.rateMax)
@@ -418,3 +421,21 @@ class Controller:
         self.yaw_w = np.clip(self.att_P_gain[2]/roll_pitch_gain, 0.0, 1.0)
 
         self.att_P_gain[2] = roll_pitch_gain
+
+    @staticmethod
+    def mixerFM(thr, moment, mixerFMinv, minWmotor, maxWmotor):
+        # Mixer (generates motor speeds)
+        t = np.array([thr, moment[0], moment[1], moment[2]])
+        w_cmd = np.sqrt(np.clip(np.dot(mixerFMinv, t), minWmotor**2, maxWmotor**2)) # clip before sqrt to avoid negative numbers
+        return w_cmd
+
+    def getMotorSpeeds(self):
+        thurst_drone_z = norm(self.thrust_rep_sp)
+        moments_drone = self.quad_params["g"]*np.dot(self.quad_params["IB"], self.rateCtrl)
+
+        w_cmd = self.mixerFM(thurst_drone_z, moments_drone, 
+                             self.quad_params["mixerFMinv"], 
+                             self.quad_params["minWmotor"], 
+                             self.quad_params["maxWmotor"])
+
+        return w_cmd
