@@ -1,4 +1,9 @@
 
+import sys, os
+curr_path = os.getcwd()
+if os.path.basename(curr_path) not in sys.path:
+    sys.path.append(os.path.dirname(os.getcwd()))
+
 from threading import Lock
 from copy import copy
 import numpy as np
@@ -58,9 +63,9 @@ ctrl_params = {
             "Dr" : 0.1,
 
             # Max Velocities (x,y,z) [m/s]
-            "uMax" : 5.0,
-            "vMax" : 5.0,
-            "wMax" : 5.0,
+            "uMax" : 50.0,
+            "vMax" : 50.0,
+            "wMax" : 50.0,
 
             "saturateVel_separately" : True,
 
@@ -156,11 +161,13 @@ class QuadCtrl(Node):
                 self.prev_sp = self.curr_sp
                 self.ctrl_sp_lock.release()
 
+            # arrives as q = x,y,z,w [0,1,2,3]
+            # needs to change to q = w,x,y,z [3,0,1,2]
             self.ctrl.control((self.t-self.prev_t), self.prev_sp.ctrltype, self.prev_sp.yawtype, 
                                self.prev_sp.pos, self.prev_sp.vel, self.prev_sp.acc, self.prev_sp.thr, 
                                self.prev_sp.yaw, self.prev_sp.yawrate,
                                state_msg.pos, state_msg.vel, state_msg.vel_dot, 
-                               state_msg.quat, state_msg.omega, state_msg.omega_dot, state_msg.rpy[2])
+                               state_msg.quat[[3,0,1,2]], state_msg.omega, state_msg.omega_dot, state_msg.rpy[2])
 
             # Mixer (generates motor speeds)
             # --------------------------- 

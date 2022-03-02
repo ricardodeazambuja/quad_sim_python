@@ -201,7 +201,7 @@ class QuadSim(Node):
 
         if self.sim_pub_lock.acquire(blocking=False):
             self.curr_state[0:3] = self.quad.pos[:]
-            self.curr_state[3:7] = self.quad.quat[:]
+            self.curr_state[3:7] = self.quad.quat[[1,2,3,0]]
             self.curr_state[7:10] = self.quad.euler[:]
             self.curr_state[10:13] = self.quad.vel[:]
             self.curr_state[13:16] = self.quad.vel_dot[:]
@@ -217,10 +217,10 @@ class QuadSim(Node):
             pose_msg.position.x = float(self.curr_state[0])
             pose_msg.position.y = float(self.curr_state[1])
             pose_msg.position.z = float(self.curr_state[2])
-            pose_msg.orientation.x = float(self.curr_state[4])
-            pose_msg.orientation.y = float(self.curr_state[5])
-            pose_msg.orientation.z = float(self.curr_state[6])
-            pose_msg.orientation.w = float(self.curr_state[3])
+            pose_msg.orientation.x = float(self.curr_state[3])
+            pose_msg.orientation.y = float(self.curr_state[4])
+            pose_msg.orientation.z = float(self.curr_state[5])
+            pose_msg.orientation.w = float(self.curr_state[6])
 
         self.quadpos_pub.publish(pose_msg)
 

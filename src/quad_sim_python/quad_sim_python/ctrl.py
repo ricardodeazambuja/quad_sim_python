@@ -16,6 +16,12 @@ import numpy as np
 from numpy import pi
 from numpy import sin, cos, sqrt
 from numpy.linalg import norm
+import sys, os
+curr_path = os.getcwd()
+if os.path.basename(curr_path) not in sys.path:
+    sys.path.append(os.path.dirname(os.getcwd()))
+
+from scipy.spatial.transform import Rotation
 import quad_sim_python.utils as utils
 
 rad2deg = 180.0/pi
@@ -167,6 +173,7 @@ class Controller:
 
         # Rotation Matrix of current state (Direct Cosine Matrix)
         dcm = utils.quat2Dcm(self.quat)
+        # dcm = Rotation.from_quat(self.quat[[3,0,1,2]]).as_matrix()
 
         # Current thrust (drone) orientation
         self.drone_z = dcm[:,2]
