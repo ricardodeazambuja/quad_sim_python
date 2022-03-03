@@ -178,7 +178,7 @@ def sameAxisAnimation(t_all, waypoints, pos_all, quat_all, sDes_tr_all, Ts, para
             pts[:,2] = -pts[:,2]
 
     
-        R = Rotation.from_quat(quat[[1,2,3,0]])
+        R = Rotation.from_quat(quat[[1,2,3,0]]).as_matrix()
         motorPoints = np.array([[dxm, -dym, dzm], [0, 0, 0], [dxm, dym, dzm], [-dxm, dym, dzm], [0, 0, 0], [-dxm, -dym, dzm]])
         motorPoints = np.dot(R, np.transpose(motorPoints))
         motorPoints[0,:] += x 
