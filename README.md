@@ -2,6 +2,11 @@
 Simple quadcopter simulator in Python
 
 # Installation:
+## Method #0
+```
+$ pip3 install quad_sim_python --upgrade
+```
+
 ## Method #1
 ```
 $ git clone https://github.com/ricardodeazambuja/quad_sim_python.git
