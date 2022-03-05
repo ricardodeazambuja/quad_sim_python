@@ -21,7 +21,7 @@ from tf2_ros.transform_listener import TransformListener
 
 from rclpy_param_helper import Dict2ROS2Params, ROS2Params2Dict
 
-from quad_sim_python.ctrl import Controller
+from quad_sim_python import Controller
 
 
 ctrl_params = {

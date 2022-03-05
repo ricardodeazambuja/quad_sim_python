@@ -20,7 +20,7 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 
-from quad_sim_python.quad import Quadcopter
+from quad_sim_python import Quadcopter
 from rclpy_param_helper import Dict2ROS2Params, ROS2Params2Dict
 
 quad_params = {}

@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>quad_sim_python</name>
+  <name>ros2_quad_sim_python</name>
   <version>0.0.1</version>
   <description>Quadcopter simulator and controller based on Python</description>
-  <maintainer email="ricardo.azambuja@gmail.com">ros2user</maintainer>
+  <maintainer email="ricardo.azambuja@gmail.com">Ricardo de Azambuja</maintainer>
   <license>MIT</license>
 
   <depend>rclpy</depend>
@@ -12,8 +12,7 @@
 
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
-  <exec_depend>python3-scipy</exec_depend>
-  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>quad_sim_python_msgs</exec_depend>
 
 
   <test_depend>ament_copyright</test_depend>
