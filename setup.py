@@ -1,6 +1,11 @@
 
-# python setup.py sdist
+# python setup.py sdist bdist_wheel
 # pip install twine
+# twine check dist/*
+# twine upload --repository testpypi dist/* --verbose
+# twine upload dist/*
+
+VERSION = "0.0.2"
 
 import sys
 from setuptools import setup, find_packages
@@ -15,7 +20,7 @@ setup(
     name="quad_sim_python",
     packages=[package for package in find_packages()],
     scripts=['examples/run_online.py','examples/run_trajectory.py'],
-    version="0.0.1",
+    version=VERSION,
     license="MIT",
     description="Simple quadcopter simulator in Python",
     long_description=long_description,
@@ -23,7 +28,7 @@ setup(
     author="Ricardo de Azambuja",
     author_email="ricardo.azambuja@gmail.com",
     url="https://github.com/ricardodeazambuja/quad_sim_python",
-    download_url="https://github.com/ricardodeazambuja/quad_sim_python/archive/refs/tags/v0.0.1.tar.gz",
+    download_url=f"https://github.com/ricardodeazambuja/quad_sim_python/archive/refs/tags/v{VERSION}.tar.gz",
     keywords=['CogniFly', 'Betaflight', 'iNAV', 'drone', 'UAV', 'Multi Wii Serial Protocol', 'MSP', 'Quadcopter'],
     install_requires=['numpy>=1.20', 'scipy>=1.6'],
     classifiers=[
