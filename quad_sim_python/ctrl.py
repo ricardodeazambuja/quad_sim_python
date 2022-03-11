@@ -73,7 +73,7 @@ ctrl_params = {
             # Max tilt [degrees]
             "tiltMax" : 50.0,
 
-            # Max Rate [rad/s]
+            # Max Rate [degrees/s]
             "pMax" : 200.0,
             "qMax" : 200.0,
             "rMax" : 150.0,
@@ -353,7 +353,6 @@ class Controller:
         
         # Desired body_x axis direction
         body_x = np.cross(y_C, body_z)
-        body_x = (body_x/norm(body_x))
         
         # Desired body_y axis direction
         body_y = np.cross(body_z, body_x)
