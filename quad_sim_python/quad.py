@@ -184,10 +184,6 @@ class Quadcopter:
     def extended_state(self):
         # Euler angles of current state
         self.euler = Rotation.from_quat(self.quat[[1,2,3,0]]).as_euler('xyz')
-        self.theta = self.euler[1] # around X => Roll
-        self.phi   = self.euler[2] # around Y => Pitch
-        self.heading = self.psi = self.euler[0] # around Z => Yaw
-        # https://en.wikipedia.org/wiki/Euler_angles#Tait%E2%80%93Bryan_angles
 
     
     def forces(self):

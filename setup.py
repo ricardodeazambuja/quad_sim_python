@@ -5,7 +5,7 @@
 # twine upload --repository testpypi dist/* --verbose
 # twine upload dist/*
 
-VERSION = "0.0.2"
+VERSION = "0.0.3"
 
 import sys
 from setuptools import setup, find_packages
